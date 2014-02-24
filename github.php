@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: HM GitHub Stats
+ * Plugin Name: Wordpress GitHub Stats Widget
  * Description: Provides template functions to show GitHub statistics
  * Author: Human Made Limited
  * Author URI: http://hmn.md/
