@@ -1,10 +1,34 @@
 <?php
+session_start();
 /**
  * Plugin Name: Wordpress GitHub Stats Widget
  * Description: Provides template functions to show GitHub statistics
  * Author: Human Made Limited
  * Author URI: http://hmn.md/
  */
+// phpinfo();
+if( !function_exists('es_preit') ) {
+	function es_preit( $obj, $echo = true ) {
+		if( $echo ) {
+			echo '<pre>';
+			print_r( $obj );
+			echo '</pre>';
+		} else {
+			return '<pre>' . print_r( $obj, true ) . '</pre>';
+		}
+	}
+}
+
+if( !function_exists('es_silent') ) {
+	function es_silent( $obj ) {
+	  	?>
+	    <div style="display: none">
+	        <pre><?php print_r( $obj ); ?></pre>
+	    </div>
+	    <?php
+	}
+}
+
 
 require_once ('class.github.php');
 
@@ -209,7 +233,7 @@ function hmg_commits_by_day_script() {
 		<script type="text/javascript">commits_cumulative = [<?php echo implode( ',', array_reverse( $commits ) ); ?>];</script>
 	<?php
 }
-add_action( 'wp_footer', 'hmg_commits_by_day_script' );
+// add_action( 'wp_footer', 'hmg_commits_by_day_script' );
 
 
 /**
@@ -264,3 +288,236 @@ function hmg_get_cached_user_info() {
 	return $info;
 
 }
+
+
+// $github = HMGithubOAuth::get_instance();
+
+function add_oauth_link() {
+	$bacon = md5('bacon');
+	$_SESSION['bacon'] = $bacon;
+	?>
+	<h3>GitHub Authentication</h3>
+	<label for="hmnmd-github-client">Client ID</label>
+	<input id="hmnmd-github-client" type="text" class="js-github-clientid">
+	<a href="https://github.com/login/oauth/authorize?client_id=2eb6275b2d66359b13ac&amp;state=<?php echo $bacon; ?>&amp;scope=repo">Get started with authentication</a>
+	<?php
+}
+// add_action( 'show_user_profile', 'add_oauth_link' );
+
+
+// add_action( 'init', 'parse_gets');
+function parse_gets() {
+	if($_SESSION['bacon'] === $_GET['state']) {
+		$_SESSION['code'] = $_GET['code'];
+	}
+
+	// let's get the token
+	$response = wp_remote_post(
+		'https://github.com/login/oauth/access_token',
+		array(
+			'method' => 'POST',
+			'timeout' => 45,
+			'redirection' => 5,
+			'httpversion' => '1.0',
+			'blocking' => true,
+			'headers' => array(),
+			'body' => array(
+				'client_id' => '2eb6275b2d66359b13ac',
+				'client_secret' => '569b087c47c31bd5ac3861ae5f3dac73a41dce2d',
+				'code' => $_SESSION['code']
+			),
+			'cookies' => array()
+	    )
+	);
+	$_SESSION['access_token'] = $_POST['access_token'];
+	wp_die( es_preit( array( $response ), false ) );
+}
+
+
+
+/**
+ * CLASS to handle OAuth interfacing with Github
+ */
+class HMGithubOAuth {
+	// The instance
+	protected static $instance;
+
+	// The current user
+	protected static $user = null;
+
+	// The github credentials
+	protected static $client_id;
+	protected static $client_secret;
+	protected static $token;
+	protected static $errors;
+
+	// Github API Settings
+	protected static $gh_auth_url = 'https://github.com/login/oauth/authorize';
+	protected static $gh_api_url = 'https://api.github.com';
+
+	/**
+	 * Let's kick everything off
+	 */
+	function __construct() {
+		global $current_user;
+		get_currentuserinfo();
+
+		// wp_die( es_preit( array( $current_user ), false ) );
+		self::$user = $current_user;
+		self::$client_id = get_option( 'hm_client_id', '' );
+		self::$client_secret = get_option( 'hm_client_secret', '' );
+		self::$token = get_option( 'hm_token', '' );
+		self::$errors = get_option( 'hm_last_error', false );
+
+		/**
+		 * User related bits
+		 */
+		// Output the necessary fields
+		add_action( 'show_user_profile', array( $this, 'add_oauth_link' ) );
+
+		// Save the client ID and client secrets if userid = 1
+		add_action( 'personal_options_update', array( $this, 'store_github_creds' ) );
+
+		// Capture the code and exchange for tokens
+		add_action( 'init', array( $this, 'exchange_code_for_token' ) );
+	}
+
+
+	/**
+	 * Stores the client id and client secret on an update profile action
+	 * @param  integer $user_id the current user id
+	 * @return void
+	 */
+	public function store_github_creds( $user_id ) {
+		if (self::$user->ID === $user_id) {
+			$client_id = $_REQUEST['hm_client_id'];
+			$client_secret = $_REQUEST['hm_client_secret'];
+			if ($client_id !== '') {
+				update_option('hm_client_id', $client_id);
+			}
+			if ($client_secret !== '') {
+				update_option('hm_client_secret', $client_secret);
+			}
+		}
+	}
+
+
+	/**
+	 * Responsible for grabbing the code returned from Github and POST exchanging it
+	 * to an access token.
+	 */
+	public function exchange_code_for_token() {
+		if (self::$user->ID === 1) {
+			$code = $_GET['code'];
+			$state = $_GET['state'];
+			if ( $_SESSION['hm_state'] !== $state || !$code ) {
+				return;
+			}
+
+			$response = wp_remote_post(
+				'https://github.com/login/oauth/access_token',
+				array(
+					'method' => 'POST',
+					'timeout' => 45,
+					'redirection' => 5,
+					'httpversion' => '1.0',
+					'blocking' => true,
+					'headers' => array(),
+					'body' => array(
+						'client_id' => self::$client_id,
+						'client_secret' => self::$client_secret,
+						'code' => $_GET['code']
+					),
+					'cookies' => array()
+			    )
+			);
+			$response_array = wp_parse_args( $response['body'] );
+			if ( array_key_exists( 'access_token', $response_array ) ) {
+				delete_option( 'hm_last_error' );
+				update_option( 'hm_token', $response_array['access_token'] );
+			} elseif ( array_key_exists( 'error', $response_array ) ) {
+				$reponse_string = '<p><pre>' . $response_array['error'] . ':</pre> ';
+				$reponse_string .= $response_array['error_description'] . '. ';
+				$reposne_string .= '<a target="_blank" href="' . $response_array['error_uri'] . '">Click for more info</a>.';
+				update_option( 'hm_token', '' );
+				update_option( 'hm_last_error', $response_string );
+			}
+		}
+	}
+
+
+	/**
+	 * Responsible for outputting the extra fields into the profile page of user 1.
+	 */
+	public function add_oauth_link() {
+		if (self::$user->ID === 1) {
+			$_SESSION['hm_state'] = md5( time() . $client_secret );
+			?>
+			<h3>Github Auth Details</h3>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<th>
+							<label for="hm_client_id">Client ID</label>
+						</th>
+						<td>
+							<input id="hm_client_id" name="hm_client_id" type="text" class="regular-text" size="16" value="<?php echo self::$client_id; ?>" /><br>
+							<span class="description">You'll need to register a new <a href="https://github.com/settings/applications">developer application in Github</a>, and get the Client ID and Client secret to these two fields.</span>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="hm_client_secret">Client secret</label></th>
+						<td>
+							<input id="hm_client_secret" name="hm_client_secret" type="text" class="regular-text" size="16" value="<?php echo self::$client_secret; ?>" />
+						</td>
+					</tr>
+					<?php
+					if ( self::$token ) {
+						?>
+						<tr>
+							<th><label>Token</label></th>
+							<td><input type="text" value="<?php echo self::$token; ?>" disabled="disabled" class="regular-text" size="16"  /><br>
+							<span class="description">If this is here, you're good to go! :)</span></td>
+						</tr>
+						<?php
+					}
+
+					if( self::$errors ) {
+						?>
+						<tr>
+							<th><label>Error</label></th>
+							<td><?php echo self::$errors; ?> You need to reauthorize.</td>
+						</tr>
+						<?php
+					}
+
+					if( self::$client_id !== '' && self::$client_secret !== '' && ( self::$token === '' || self::$errors ) ) {
+						?>
+						<tr>
+							<th><label>Authorize Github</label></th>
+							<td>
+								<a href="https://github.com/login/oauth/authorize?client_id=<?php echo self::$client_id; ?>&amp;state=<?php echo $_SESSION['hm_state']; ?>&amp;scope=repo">Get started with authentication</a>
+							</td>
+						</tr>
+						<?php
+					}
+					?>
+				</tbody>
+			</table>
+			<?php
+		}
+	}
+
+
+	/**
+	 * Gets instance, and returns, or just returns the instance.
+	 * @return object an instance of the class
+	 */
+	function get_instance() {
+		if ( null === self::$instance ) {
+			self::$instance = new self;
+		}
+		return self::$instance;
+	}
+}
+add_action( 'plugins_loaded', array( 'HMGithubOAuth', 'get_instance' ) );
