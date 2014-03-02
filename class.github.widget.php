@@ -1,8 +1,4 @@
 <?php
-
-
-
-
 class HMGithubWidget extends WP_Widget {
 
     private $stats;
@@ -15,12 +11,17 @@ class HMGithubWidget extends WP_Widget {
     function __construct() {
         $this->stats = false;
         $this->total_commits = false;
+        $this->last30 = false;
+        $this->total_last30 = false;
+
+        // Only get these if the class exists
         if(class_exists('HMGithubOAuth')) {
             $_stats = HMGithubOAuth::get_instance();
             $this->stats = $_stats->get_stats_for_widget();
             $this->total_commits = array_sum( $this->stats );
+            $this->last30 = $this->get_last30();
+            $this->total_last30 = array_sum($this->last30);
         }
-        $this->last30 = $this->get_last30();
 
         // wp_die( es_preit( array( $this->stats, $this->total_commits ), false ) );
         parent::__construct(
@@ -53,10 +54,17 @@ class HMGithubWidget extends WP_Widget {
         echo $args['before_widget'];
 
         if ( ! empty( $title ) ) {
+            if( ! empty( $link ) ) {
+                echo '<a href="' . $link . '">';
+            }
             echo $args['before_title'] . $title . $args['after_title'];
+            if( ! empty( $link ) ) {
+                echo '</a>';
+            }
         }
 
         ?>
+
         <div class="hm-github-graph cf">
             <?php
             $highest = $this->get_highest();
@@ -70,16 +78,28 @@ class HMGithubWidget extends WP_Widget {
 
             ?>
         </div>
+        <p class="hm-total-commits">
+            <?php
+            if( $this->total_commits ) {
+                echo 'Total commits: ' . $this->total_commits;
+            } else {
+                echo 'Total commits unavailable at this time';
+            }
+            ?>
+        </p>
+        <p class="hm-last30-commits">
+            <?php
+            if( $this->total_last30 ) {
+                echo $this->total_last30 . ' commits in last 30 days.';
+                echo '<span>Commits per day: ' . number_format( (intval( $this->total_last30 ) / 30 ), 2) . '</span>';
+            }
+            ?>
+        </p>
         <?php
 
-        if( $this->total_commits ) {
-
-            echo 'Total commits: ' . $this->total_commits;
-        } else {
-            echo 'Total commits unavailable at this time';
-        }
         echo $args['after_widget'];
     }
+
 
     /**
      * Back-end widget form.
@@ -91,19 +111,15 @@ class HMGithubWidget extends WP_Widget {
     public function form( $instance ) {
         if ( isset( $instance[ 'title' ] ) ) {
             $title = $instance[ 'title' ];
-        }
-        else {
+        } else {
             $title = __( 'New title', 'hm_github_widget_textdomain' );
         }
 
         if ( isset( $instance[ 'link' ] ) ) {
             $link = $instance[ 'link' ];
+        } else {
+            $link = '';
         }
-        else {
-            $link = __( 'New link', 'hm_github_widget_textdomain' );
-        }
-
-
 
         ?>
         <p>
@@ -118,6 +134,7 @@ class HMGithubWidget extends WP_Widget {
         <?php
     }
 
+
     /**
      * Sanitize widget form values as they are saved.
      *
@@ -131,10 +148,16 @@ class HMGithubWidget extends WP_Widget {
     public function update( $new_instance, $old_instance ) {
         $instance = array();
         $instance['title'] = ( ! empty( $new_instance['title'] ) ) ? strip_tags( $new_instance['title'] ) : '';
+        $instance['link'] = ( ! empty( $new_instance['link'] ) ) ? strip_tags( $new_instance['link'] ) : '';
 
         return $instance;
     }
 
+
+    /**
+     * Once I have the stats, I'm rearranging the numbers to get the last 30 days
+     * @return array containing the last 30 days' worth of commit data
+     */
     private function get_last30() {
         $stats = $this->stats;
         krsort( $stats );
@@ -142,13 +165,18 @@ class HMGithubWidget extends WP_Widget {
         return $stats;
     }
 
+
+    /**
+     * Returns the highest value in the last 30 days of commit history. Used in the
+     * bargraph css.
+     * @return int/string the highest value
+     */
     private function get_highest() {
         $temparray = $this->last30;
         rsort( $temparray );
         return $temparray[0];
     }
-
-} // class Foo_Widget
+}
 
 
 
