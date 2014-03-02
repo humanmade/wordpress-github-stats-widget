@@ -1,35 +1,18 @@
 # HM GitHub Stats
 
 ## Configuration
-Add the following to your `wp-config.php`, but replace as needed with your
-actual username/password:
+You need to be user with ID 1 to configure the plugin.
 
-```php
-define( 'HMG_USERNAME', 'willmot' );
-define( 'HMG_PASSWORD', 'hunter2' );
-define( 'HMG_ORGANISATION', 'humanmade' );
-```
+Create an application on your Github profile. Go here: [https://github.com/settings/applications](https://github.com/settings/applications) and click Register New Application.
+
+Navigate to Users -> Your profile, and scroll down towards the bottom. Copy and paste the client ID and client secret from your Github application, and click update. A link will appear. Click on the link, which will take you to Github's OAuth prompt, and authorize access. The plugin only reads data from Github, it does not write anything to it.
+
+You may have to wait and refresh until WordPress fetches all the organisations you belong to. Tick the boxes you want to count, and click Update Profile again. This will start data gathering. Depending on the number of repositories you have across the organisations, this might take a while.
+
+If you wish to reset all the settings, tick Purge Settings, and update.
 
 ## Usage
-```php
-
-<div class="stat-commits" style="position:relative;">
-
-    <div id="graph-commits" style="position:absolute;top:0;right:0;"></div>
-
-    <div class="stat-wrap">
-    	<a href="https://github.com/humanmade"><div class="stat-num"><?php echo ( $commits = array_sum( hmg_get_formatted_commits_for_month_cached() ) ) ? $commits : '&hellip;'; ?></div></a>
-    </div>
-
-    <div class="stat-comment">
-        <span style="float:left">github commits this month</span>
-        30 days / <span class="active"><strong><?php echo ( $average = hmg_commits_by_day_average() ) ? $average : '&hellip;'; ?></strong> commits per day</span>
-
-    </div>
-
-</div>
-
-```
+Go to Appearance -> Widgets. There you will find one that's called Github Statistics. Drag it where you want it to appear, give it a name, optionally give it an absolute link (http:// or https:// in front), and save. If all data gathering is finished by this point, you should see the data in the sidebar.
 
 ## Contribution guidelines ##
 
