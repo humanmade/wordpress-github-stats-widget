@@ -7,7 +7,7 @@ session_start();
  * Author URI: http://hmn.md/
  */
 
-require_once dirname( __FILE__ ) . '/utils.php';
+// require_once dirname( __FILE__ ) . '/utils.php';
 require_once dirname( __FILE__ ) . '/tlc-transients.php';
 require_once dirname( __FILE__ ) . '/class.github.widget.php';
 
@@ -129,6 +129,10 @@ class HMGithubOAuth {
 			$step = 4;
 		}
 
+		if ( $step > 8 ) {
+			$step = 8;
+		}
+
 		$base = 1.4;
 		return ceil( pow( $base, $step ) );
 	}
@@ -167,13 +171,21 @@ class HMGithubOAuth {
 		while( 202 === intval( $response['response']['code'] ) ) {
 			$sleepfor = self::timeout_secs($step);
 			wp_mail('gabor@javorszky.co.uk', 'sleeping', 'sleeping for ' . $sleepfor . ' seconds while fetching ' . $url);
-			$step++;
-			sleep($sleepfor);
+
+			// If this is the first try, don't sleep
+			if($step !== 0 ) {
+				sleep($sleepfor);
+			}
+
 			$response = wp_remote_get( $fetch );
 
-			if ( is_wp_error( $response ) ) {
+			// If it's an error, or we've tried for too long, exit
+			if ( is_wp_error( $response ) || $step > 8 ) {
 				return null;
 			}
+
+			// Try again
+			$step++;
 		}
 
 		return json_decode( $response['body'] );
@@ -307,7 +319,6 @@ class HMGithubOAuth {
 	public function store_github_creds( $user_id ) {
 		if (self::$user->ID === $user_id) {
 
-			// wp_die( es_preit( array( $_REQUEST ), false ) );
 			if (array_key_exists( 'hm_purge_creds', $_REQUEST ) && $_REQUEST['hm_purge_creds'] === 'on' ) {
 
 				delete_option( 'hm_client_id' );
@@ -619,7 +630,6 @@ class HMGithubOAuth {
 
 
 	public function multi_checked( $is, $input ) {
-		// wp_die( es_preit( array( $is, $input ), false ) );
 		if( in_array( $input, $is ) ) {
 			echo ' checked="checked"';
 		}
