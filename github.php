@@ -1,4 +1,5 @@
 <?php
+session_start();
 /**
  * Plugin Name: Wordpress GitHub Stats Widget
  * Description: Provides template functions to show GitHub statistics
@@ -56,16 +57,27 @@ class HMGithubOAuth {
 		self::$client_secret = get_option( 'hm_client_secret', '' );
 		self::$token = get_option( 'hm_token', '' );
 		self::$errors = get_option( 'hm_last_error', false );
-		self::$gh_user = self::get_hm_option( 'hm_user', array( $this, 'get_user' ) );
-		self::$gh_organisations = self::get_hm_option( 'hm_organisations', array( $this, 'get_organisations' ), false );
 		self::$gh_the_organisation = get_option( 'hm_the_organisation', '' );
-		self::$gh_repositories = self::get_hm_option( 'hm_repositories_' . self::$gh_the_organisation, array( $this, 'get_repos' ) );
-		self::$is_authenticated = self::get_hm_option( 'hm_authenticated', array( $this, 'is_authenticated' ), true, $authexpiry );
+
+
+		// cached, might change
+		self::$gh_user = self::get_hm_option( 'hm_user', array( $this, 'get_user' ), false );
+		self::$gh_organisations = self::get_hm_option( 'hm_organisations', array( $this, 'get_organisations' ), false );
+		self::$is_authenticated = self::get_hm_option( 'hm_authenticated', array( $this, 'is_authenticated' ), false, $authexpiry );
+
 
 		// only run these when there's a point in running them
+		if(!empty(self::$gh_the_organisation)) {
+			self::$gh_repositories = self::get_hm_option( 'hm_repositories', array( $this, 'get_repos' ) );
+		}
+
 		if(self::$gh_repositories) {
+
 			self::$total_stats = self::get_hm_option( 'hm_total_stats', array( $this, 'get_stats' ) );
 		}
+
+
+
 
 		if(self::$total_stats) {
 			self::$daily_stats = self::get_hm_option( 'hm_daily_stats', array( $this, 'calculate_aggregate_daily_stats'));
@@ -257,29 +269,31 @@ class HMGithubOAuth {
 			return false;
 		}
 
-		$url = self::$gh_the_organisation;
 		$repos = array();
-		$page = 1;
-		$morepages = true;
-		while ( $morepages ) {
-			$fetch = add_query_arg( array(
-				'access_token' => self::$token,
-				'page' => $page
-			), $url );
 
-			$response = wp_remote_get( $fetch );
+		foreach (self::$gh_the_organisation as $url) {
+			$page = 1;
+			$morepages = true;
+			while ( $morepages ) {
+				$fetch = add_query_arg( array(
+					'access_token' => self::$token,
+					'page' => $page
+				), $url );
 
-			if ( is_wp_error( $response ) || 200 !== intval( $response['response']['code'] ) ) {
-				return null;
+				$response = wp_remote_get( $fetch );
+
+				if ( is_wp_error( $response ) || 200 !== intval( $response['response']['code'] ) ) {
+					return null;
+				}
+
+				$reparray = json_decode($response['body']);
+
+				$repos = array_merge( $repos, $reparray );
+				if ( count( $reparray ) < 30 ) {
+					$morepages = false;
+				}
+				$page += 1;
 			}
-
-			$reparray = json_decode($response['body']);
-
-			$repos = array_merge( $repos, $reparray );
-			if ( count( $reparray ) < 30 ) {
-				$morepages = false;
-			}
-			$page += 1;
 		}
 		return $repos;
 	}
@@ -293,6 +307,7 @@ class HMGithubOAuth {
 	public function store_github_creds( $user_id ) {
 		if (self::$user->ID === $user_id) {
 
+			// wp_die( es_preit( array( $_REQUEST ), false ) );
 			if (array_key_exists( 'hm_purge_creds', $_REQUEST ) && $_REQUEST['hm_purge_creds'] === 'on' ) {
 
 				delete_option( 'hm_client_id' );
@@ -302,6 +317,11 @@ class HMGithubOAuth {
 				delete_option( 'hm_last_error' );
 				delete_option( 'hm_the_organisation' );
 				delete_option( 'hm_organisations' );
+
+				delete_transient( 'tlc__' . md5( 'hm_authenticated' ) );
+				delete_transient( 'tlc__' . md5( 'hm_user' ) );
+				delete_transient( 'tlc__' . md5( 'hm_organisations' ) );
+
 				return;
 			}
 			if (array_key_exists( 'hm_client_id', $_REQUEST ) ) {
@@ -315,9 +335,11 @@ class HMGithubOAuth {
 
 
 			if (array_key_exists( 'hm_the_organisation', $_REQUEST ) ) {
-				if(self::$gh_the_organisation !== $_REQUEST['hm_the_organisation'] ) {
+				if( self::$gh_the_organisation !== $_REQUEST['hm_the_organisation']) {
+					delete_transient( 'tlc__' . md5( 'hm_repositories' ) );
 
 				}
+
 				update_option('hm_the_organisation', $_REQUEST['hm_the_organisation']);
 			}
 		}
@@ -435,25 +457,19 @@ class HMGithubOAuth {
 						<tr>
 							<th><label for="hm_the_organisation">Select an Organisation</label></th>
 							<td>
-								<select name="hm_the_organisation" id="hm_the_organisation">
-									<option value="0">Please select one</option>
-									<?php
-									foreach ( self::$gh_organisations as $org) {
-										$_v = $org->repos_url;
-										?>
-										<option value="<?php echo $_v; ?>" <?php selected( self::$gh_the_organisation, $_v ); ?>><?php echo $org->login; ?></option>
-										<?php
-									}
+								<?php
+								foreach ( self::$gh_organisations as $org) {
+									$_v = $org->repos_url;
 									?>
-								</select>
+									<label for="hm_the_org_<?php echo $org->login; ?>">
+										<input id="hm_the_org_<?php echo $org->login; ?>" type="checkbox" name="hm_the_organisation[]" value="<?php echo $_v; ?>" <?php self::multi_checked(self::$gh_the_organisation, $_v); ?>>
+									<?php echo $org->login;?></label><br/>
+									<?php
+								}
+								?>
 							</td>
 						</tr>
-						<tr>
-							<th><label for="hm_purge_creds">Purge settings?</label></th>
-							<td>
-								<input type="checkbox" name="hm_purge_creds" id="hm_purge_creds">
-							</td>
-						</tr>
+
 						<?php
 					}
 					if( self::$errors ) {
@@ -478,44 +494,54 @@ class HMGithubOAuth {
 					if ( self::$is_authenticated ) {
 						?>
 						<tr>
-							<th><label for="">Authenticated?</label></th>
+							<th><label>Authenticated?</label></th>
 							<td>Yes</td>
 						</tr>
 						<?php
 					} else {
 						?>
 						<tr>
-							<th><label for="">Authenticated?</label></th>
+							<th><label>Authenticated?</label></th>
 							<td>Nope</td>
 						</tr>
 						<?php
 					}
+					?>
+					<tr>
+						<th><label for="hm_purge_creds">Purge settings?</label></th>
+						<td>
+							<input type="checkbox" name="hm_purge_creds" id="hm_purge_creds">
+						</td>
+					</tr>
+					<?php
+					// For debugging purposes only
+					if ( 1 == 2 ) {
+						if ( self::$gh_repositories ) {
+							?>
+							<tr>
+								<td><label>Repositories</label></td>
+								<td>
+									<p>
+										<?php
 
-					if ( self::$gh_repositories ) {
-						?>
-						<tr>
-							<td><label>Repositories</label></td>
-							<td>
-								<p>
-									<?php
-
-									foreach (self::$gh_repositories as $repo) {
-										echo $repo->name . '<br />';
-									}
-									?>
-								</p>
-							</td>
-						</tr>
-						<?php
-					} else {
-						?>
-						<tr>
-							<th><label for="">Repositories</label></th>
-							<td>
-								<p>Fetching the data from Github, it might take a while.</p>
-							</td>
-						</tr>
-						<?php
+										foreach (self::$gh_repositories as $repo) {
+											echo $repo->name . '<br />';
+										}
+										?>
+									</p>
+								</td>
+							</tr>
+							<?php
+						} else {
+							?>
+							<tr>
+								<th><label for="">Repositories</label></th>
+								<td>
+									<p>Fetching the data from Github, it might take a while.</p>
+								</td>
+							</tr>
+							<?php
+						}
 					}
 					?>
 				</tbody>
@@ -591,6 +617,13 @@ class HMGithubOAuth {
 		return self::$daily_stats;
 	}
 
+
+	public function multi_checked( $is, $input ) {
+		// wp_die( es_preit( array( $is, $input ), false ) );
+		if( in_array( $input, $is ) ) {
+			echo ' checked="checked"';
+		}
+	}
 
 	/**
 	 * Gets instance, and returns, or just returns the instance.

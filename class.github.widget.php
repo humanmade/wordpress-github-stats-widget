@@ -18,9 +18,14 @@ class HMGithubWidget extends WP_Widget {
         if(class_exists('HMGithubOAuth')) {
             $_stats = HMGithubOAuth::get_instance();
             $this->stats = $_stats->get_stats_for_widget();
-            $this->total_commits = array_sum( $this->stats );
+
+            if(is_array($this->stats)) {
+                $this->total_commits = array_sum( $this->stats );
+            }
             $this->last30 = $this->get_last30();
-            $this->total_last30 = array_sum($this->last30);
+            if(is_array($this->last30)) {
+                $this->total_last30 = array_sum($this->last30);
+            }
         }
 
         // wp_die( es_preit( array( $this->stats, $this->total_commits ), false ) );
@@ -160,6 +165,9 @@ class HMGithubWidget extends WP_Widget {
      */
     private function get_last30() {
         $stats = $this->stats;
+        if(empty($stats)) {
+            return;
+        }
         krsort( $stats );
         $stats = array_slice( $stats, 0, 30 );
         return $stats;
@@ -173,6 +181,9 @@ class HMGithubWidget extends WP_Widget {
      */
     private function get_highest() {
         $temparray = $this->last30;
+        if(empty($temparray)) {
+            return;
+        }
         rsort( $temparray );
         return $temparray[0];
     }
