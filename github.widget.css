@@ -1,0 +1,28 @@
+.cf:before,
+.cf:after {
+    content: " ";
+    display: table;
+}
+
+.cf:after {
+    clear: both;
+}
+.cf {
+    *zoom: 1;
+}
+.hm-github-graph {
+    width: 200px;
+    height: 40px;
+    position: relative;
+    font-size: 0px;
+}
+
+.hm-github-graph .bar {
+    min-height: 1px;
+    display: inline-block;
+
+    width: 2.8%;
+    margin-right: 1px;
+    background-color: gray;
+    border: 1px solid black;
+}

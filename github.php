@@ -1,339 +1,14 @@
 <?php
-session_start();
 /**
  * Plugin Name: Wordpress GitHub Stats Widget
  * Description: Provides template functions to show GitHub statistics
  * Author: Human Made Limited
  * Author URI: http://hmn.md/
  */
-// phpinfo();
-if( !function_exists('es_preit') ) {
-	function es_preit( $obj, $echo = true ) {
-		if( $echo ) {
-			echo '<pre>';
-			print_r( $obj );
-			echo '</pre>';
-		} else {
-			return '<pre>' . print_r( $obj, true ) . '</pre>';
-		}
-	}
-}
 
-if( !function_exists('es_silent') ) {
-	function es_silent( $obj ) {
-	  	?>
-	    <div style="display: none">
-	        <pre><?php print_r( $obj ); ?></pre>
-	    </div>
-	    <?php
-	}
-}
-
-
-require_once ('class.github.php');
-
-/**
- * Add Github username field to the profile.
- */
-function hmg_github_user_field( $contactmethods ) {
-	$contactmethods['github'] = 'Github username';
-	return $contactmethods;
-}
-add_filter( 'user_contactmethods', 'hmg_github_user_field' );
-
-
-/**
- * Get an aggregate number of commits from all of a users repos for the last 30 days.
- *
- * @return [type] [description]
- */
-function hmg_get_commits_for_day( $day ) {
-
-	// No configuration set. :(
-	if ( ! defined( 'HMG_USERNAME' ) || ! defined( 'HMG_PASSWORD' ) || ! defined( 'HMG_ORGANISATION' ) )
-		return;
-
-	set_time_limit(0);
-
-	// The day is not over!
-	if ( $day == strtotime( 'today') )
-		return;
-
-	// Create the days array. j
-	$commits = array();
-
-	$username = HMG_USERNAME;
-	$password = HMG_PASSWORD;
-	$organisation = HMG_ORGANISATION;
-
-	$github = new HMGitHub( $username, $password );
-	$github->organisation = $organisation;
-	$github->authenticate();
-
-	// We need to make sure there aren't any duplicate repos.
-	$repos = array();
-	foreach ( (array) $github->get_repos() as $repo )
-		$repos[] = $repo->name;
-
-	if ( empty( $repos ) )
-		return null;
-
-	foreach ( array_unique( $repos ) as $key => $repo ) {
-
-		$branches = $github->get_branches( $repo );
-
-		foreach ( $branches as $branch ) {
-
-			$still_has_paginated_commits = true;
-
-			$sha = null;
-
-			while ( $still_has_paginated_commits ) {
-
-				$response = $github->get_repo_commits( $repo, $branch->name, $sha ); //more paginated commits (sha defines start point of returned results)
-
-				if ( ! $response )
-					break;
-
-				foreach ( $response as $commit ) {
-
-					//If something is wrong, stop cycling
-					if ( empty( $commit->sha ) || $sha == $commit->sha ) {
-
-						$still_has_paginated_commits = false;
-						break;
-					}
-
-					$sha = $commit->sha;
-					$committed_date = strtotime( $commit->commit->author->date );
-
-					if ( $committed_date >= $day + 60*60*24 || in_array( $commit->sha, $commits ) ) {
-
-					//If we've gone too far back in time in the commit tree, stop cycling through the pagination
-					} elseif ( $committed_date < $day ) {
-
-						$still_has_paginated_commits = false;
-						break;
-
-					//If everything looks in order, add the commit to the count
-					} else {
-
-						$commits[] = $commit->sha;
-					}
-
-				}
-
-				$still_has_paginated_commits = ( count( $response ) >= 30 && $still_has_paginated_commits ) ? true : false;
-			}
-
-		}
-	}
-
-	return array_unique( (array) $commits );
-
-};
-
-
-/**
- * Get Commits by day.
- *
- * Goes back as far as records began. Stored in an option.
- * Loops through the past 30 days, and fills in any gaps.
- *
- * @return array Commits by day. Key is commit day, value is array of commit SHAs.
- */
-function hmg_update_commits_by_day() {
-
-	//Period of time to check over. Make sure last 30 days is complete. Just in case one is incomplete.
-	$day_to_check = strtotime( '30 days ago' );
-	$commits = get_option( 'hmg_commits_by_day', array() );
-
-	// Loop through the days, and check whether that days data exists. If not - get it.
-	// Note only 1 day of data is collected each time this function is called.
-	for ( $i = strtotime( 'yesterday' ); $i > $day_to_check; $i = $i - 60*60*24 ) {
-
-		//take into account daylight savings, check whether that day exists
-		if ( ! array_key_exists( $i, $commits ) && ! array_key_exists( $i + ( 60*60 ), $commits ) && ! array_key_exists( $i - ( 60*60 ), $commits ) ) {
-
-			$response = hmg_get_commits_for_day( $i );
-
-			if ( ! is_null( $response ) )
-				$commits[$i] = $response;
-
-			ksort( $commits );
-			update_option( 'hmg_commits_by_day', $commits );
-
-		}
-
-	}
-
-	return $commits;
-}
-
-
-/**
- * Format the commit data for display.
- *
- * 1 month of data, with only commit day and only commit count.
- *
- * @return array 30 days of commits, Key is timestamp of day, value is count of commits for that day.
- */
-function hmg_get_formatted_commits_for_month() {
-
-	$commits = hmg_update_commits_by_day();
-
-	ksort( $commits );
-
-	$commits = array_slice( array_reverse( $commits ), 0, 30 );
-
-	foreach( $commits as $day => $day_commits )
-		$r[ $day ] = count( $day_commits );
-
-	if ( count( $r ) < 30 )
-		$r = array_pad( $r, 30, 0);
-
-	return $r;
-
-}
-
-
-/**
- * Helper function for getting formatted commits by month.
- * Uses tlc transiets to update the value in the background.
- *
- * @return array 30 days of commits, Key is timestamp of day, value is count of commits for that day.
- */
-function hmg_get_formatted_commits_for_month_cached() {
-
-	$timeout = 60*60*4; // 4 Hours
-
-	$commits = (array) tlc_transient( 'hmg_formatted_commits_by_day' )
-		->updates_with( 'hmg_get_formatted_commits_for_month' )
-		->expires_in( $timeout )
-		->background_only()
-		->get();
-
-	return $commits;
-
-}
-
-
-/**
- * Output the Commit count by day data variable script.
- * Inserted into the footer.
- * Used to build graphs.
- *
- * @return null
- */
-function hmg_commits_by_day_script() {
-
-	$commits = hmg_get_formatted_commits_for_month_cached();
-
-	?>
-		<script type="text/javascript">commits_cumulative = [<?php echo implode( ',', array_reverse( $commits ) ); ?>];</script>
-	<?php
-}
-// add_action( 'wp_footer', 'hmg_commits_by_day_script' );
-
-
-/**
- * Get the average number of commits per day over the last 30 days.
- *
- * @return int
- */
-function hmg_commits_by_day_average() {
-
-	$commits = hmg_get_formatted_commits_for_month_cached();
-	return round( array_sum( $commits ) / count( $commits ), 1 );
-
-}
-
-
-/**
- * Get the current user info.
- * Wrapper for the api that caches the result in a transient for 1 day.
- *
- * @return object User/Org info.
- */
-function hmg_get_user_info() {
-
-	if ( ! defined( 'HMG_ORGANISATION' ) )
-		return null;
-
-	$username = HMG_ORGANISATION;
-	$github = new HMGitHub( $username );
-	return $github->get_user_info();
-
-}
-
-
-/**
- * Get the cached current user info.
- * hmg_get_user_info() is used by tlc transients to update the value in the background.
- *
- * @return object User/Org info.
- */
-function hmg_get_cached_user_info() {
-
-	if ( ! defined( 'HMG_ORGANISATION' ) )
-		return null;
-
-	$username = HMG_ORGANISATION;
-	$info = (array) tlc_transient( 'hmg_get_user_info_' . $username )
-		->updates_with( 'hmg_get_user_info' )
-		->expires_in( 60 * 60 * 24 )
-		->background_only()
-		->get();
-
-	return $info;
-
-}
-
-
-// $github = HMGithubOAuth::get_instance();
-
-function add_oauth_link() {
-	$bacon = md5('bacon');
-	$_SESSION['bacon'] = $bacon;
-	?>
-	<h3>GitHub Authentication</h3>
-	<label for="hmnmd-github-client">Client ID</label>
-	<input id="hmnmd-github-client" type="text" class="js-github-clientid">
-	<a href="https://github.com/login/oauth/authorize?client_id=2eb6275b2d66359b13ac&amp;state=<?php echo $bacon; ?>&amp;scope=repo">Get started with authentication</a>
-	<?php
-}
-// add_action( 'show_user_profile', 'add_oauth_link' );
-
-
-// add_action( 'init', 'parse_gets');
-function parse_gets() {
-	if($_SESSION['bacon'] === $_GET['state']) {
-		$_SESSION['code'] = $_GET['code'];
-	}
-
-	// let's get the token
-	$response = wp_remote_post(
-		'https://github.com/login/oauth/access_token',
-		array(
-			'method' => 'POST',
-			'timeout' => 45,
-			'redirection' => 5,
-			'httpversion' => '1.0',
-			'blocking' => true,
-			'headers' => array(),
-			'body' => array(
-				'client_id' => '2eb6275b2d66359b13ac',
-				'client_secret' => '569b087c47c31bd5ac3861ae5f3dac73a41dce2d',
-				'code' => $_SESSION['code']
-			),
-			'cookies' => array()
-	    )
-	);
-	$_SESSION['access_token'] = $_POST['access_token'];
-	wp_die( es_preit( array( $response ), false ) );
-}
-
-
+require_once dirname( __FILE__ ) . '/utils.php';
+require_once dirname( __FILE__ ) . '/tlc-transients.php';
+require_once dirname( __FILE__ ) . '/class.github.widget.php';
 
 /**
  * CLASS to handle OAuth interfacing with Github
@@ -355,19 +30,46 @@ class HMGithubOAuth {
 	protected static $gh_auth_url = 'https://github.com/login/oauth/authorize';
 	protected static $gh_api_url = 'https://api.github.com';
 
+	// Github API Responses
+	protected static $gh_user;
+	protected static $gh_organisations;
+	protected static $gh_the_organisation;
+	protected static $gh_repositories;
+	protected static $is_authenticated;
+	protected static $total_stats;
+	protected static $daily_stats;
+
+
 	/**
 	 * Let's kick everything off
 	 */
-	function __construct() {
+	public function __construct() {
 		global $current_user;
 		get_currentuserinfo();
 
-		// wp_die( es_preit( array( $current_user ), false ) );
+		// how often should we check for authorized status
+		$authexpiry = 30 * MINUTE_IN_SECONDS;
+
+
 		self::$user = $current_user;
 		self::$client_id = get_option( 'hm_client_id', '' );
 		self::$client_secret = get_option( 'hm_client_secret', '' );
 		self::$token = get_option( 'hm_token', '' );
 		self::$errors = get_option( 'hm_last_error', false );
+		self::$gh_user = self::get_hm_option( 'hm_user', array( $this, 'get_user' ) );
+		self::$gh_organisations = self::get_hm_option( 'hm_organisations', array( $this, 'get_organisations' ), false );
+		self::$gh_the_organisation = get_option( 'hm_the_organisation', '' );
+		self::$gh_repositories = self::get_hm_option( 'hm_repositories_' . self::$gh_the_organisation, array( $this, 'get_repos' ) );
+		self::$is_authenticated = self::get_hm_option( 'hm_authenticated', array( $this, 'is_authenticated' ), true, $authexpiry );
+
+		// only run these when there's a point in running them
+		if(self::$gh_repositories) {
+			self::$total_stats = self::get_hm_option( 'hm_total_stats', array( $this, 'get_stats' ) );
+		}
+
+		if(self::$total_stats) {
+			self::$daily_stats = self::get_hm_option( 'hm_daily_stats', array( $this, 'calculate_aggregate_daily_stats'));
+		}
 
 		/**
 		 * User related bits
@@ -384,19 +86,239 @@ class HMGithubOAuth {
 
 
 	/**
+	 * Get the last year's commit activity for each repository we have stored
+	 * @return array see above line
+	 */
+	public function get_stats() {
+		// placeholder array
+		$stats = array();
+		foreach (self::$gh_repositories as $repository) {
+			$stats[$repository->name] = tlc_transient( 'hm_stats_' . md5($repository->name ) )
+				->updates_with( array( $this, 'get_repo_stat' ), array( $repository->url, md5($repository->name ) ) )
+				->expires_in( 86400 )
+				->background_only()
+				->get();
+		}
+		return $stats;
+	}
+
+	/**
+	 * Incremental sleep seconds. This is used in case Github returns with a 202 instead of a 200
+	 * when asking for commit statistics
+	 * @param  integer $step larger than 1
+	 * @return integer       still larger than 1
+	 */
+	function timeout_secs( $step ) {
+		// force it to be an integer
+		$step = intval( $step );
+
+		// totally arbitrary
+		if ( $step < 0 ) {
+			$step = 4;
+		}
+
+		$base = 1.4;
+		return ceil( pow( $base, $step ) );
+	}
+
+
+	/**
+	 * Queries Github's API for a specific repository's statistics.
+	 *
+	 * Response might be 202, which means Github is still compiling data. I'm retrying in that case
+	 *
+	 * @param  string $url  the api url of the repo
+	 * @param  string $name the name of the repo
+	 * @return array/object       the commit history of the repo for the last 1 year
+	 */
+	public function get_repo_stat( $url, $name ) {
+		// construct the url for commit activity
+		$url = $url . '/stats/commit_activity';
+
+		// needed in case we need to sleep()
+		$step = 0;
+
+		// let's add the access token to the url
+		$fetch = add_query_arg( array(
+			'access_token' => self::$token
+		), $url );
+
+		// first try
+		$response = wp_remote_get( $fetch );
+
+		// in case Github's down
+		if ( is_wp_error( $response ) ) {
+			return null;
+		}
+
+		// As long as Github's working on it...
+		while( 202 === intval( $response['response']['code'] ) ) {
+			$sleepfor = self::timeout_secs($step);
+			wp_mail('gabor@javorszky.co.uk', 'sleeping', 'sleeping for ' . $sleepfor . ' seconds while fetching ' . $url);
+			$step++;
+			sleep($sleepfor);
+			$response = wp_remote_get( $fetch );
+
+			if ( is_wp_error( $response ) ) {
+				return null;
+			}
+		}
+
+		return json_decode( $response['body'] );
+	}
+
+
+	/**
+	 * Once we have all the commit stats of all the repositories, let's sanitize that, and put each commit data
+	 * into the appropriately indexed daily key.
+	 *
+	 * We also need to cut off future events. (Github's returning future keys, assuming it's giving me a full
+	 * year even if the repo is 4 months old.)
+	 * @return array sanitized daily stats
+	 */
+	public function calculate_aggregate_daily_stats() {
+		$d = 60 * 60 * 24;
+		$_stats = array();
+
+		foreach (self::$total_stats as $reponame => $repostats) {
+			foreach ($repostats as $week) {
+				foreach ($week->days as $index => $day) {
+					$_k = $week->week + ($index * $d);
+					if(array_key_exists($_k, $_stats)) {
+						$_stats[$_k] += $day;
+					} else {
+						$_stats[$_k] = $day;
+					}
+				}
+			}
+		}
+
+		// Kill the future
+		foreach ($_stats as $key => $value) {
+			if ($key > time() ) {
+				unset( $_stats[$key] );
+			}
+		}
+
+		return $_stats;
+	}
+
+
+	/**
+	 * Wrapper around the tlc transient functionality
+	 * @param  string  			$name       	name of the option / transient we're fetching
+	 * @param  string/array  	$update     	name of the function to handle updating
+	 * @param  int  			$expires    	how long the transient lives in seconds. default is a day
+	 * @param  boolean 			$background 	whether to update in background
+	 * @return mixed              				the data stored
+	 */
+	public function get_hm_option( $name, $update, $background = true, $expires = 86400  ) {
+		if ( $background ) {
+			$option = tlc_transient( $name )
+				->updates_with( $update )
+				->expires_in( $expires )
+				->background_only()
+				->get();
+		} else {
+			$option = tlc_transient( $name )
+				->updates_with( $update )
+				->expires_in( $expires )
+				->get();
+		}
+		return $option;
+	}
+
+
+	/**
+	 * Wrapper function to get user from cache / Github
+	 * @return array the user data
+	 */
+	public function get_user() {
+		return self::fetch_data( 'user' );
+	}
+
+
+	/**
+	 * Wrapper function to get organisation from cache / Github
+	 * @return array organisation data
+	 */
+	public function get_organisations() {
+		return self::fetch_data( 'orgs' );
+	}
+
+
+	/**
+	 * Gets all the repositories for an organisation. Handles paginated Github query
+	 * @return array all the repository data
+	 */
+	public function get_repos() {
+		// If we don't have an organisation, let's not return anything
+		if (!isset(self::$gh_the_organisation ) ) {
+			return false;
+		}
+
+		$url = self::$gh_the_organisation;
+		$repos = array();
+		$page = 1;
+		$morepages = true;
+		while ( $morepages ) {
+			$fetch = add_query_arg( array(
+				'access_token' => self::$token,
+				'page' => $page
+			), $url );
+
+			$response = wp_remote_get( $fetch );
+
+			if ( is_wp_error( $response ) || 200 !== intval( $response['response']['code'] ) ) {
+				return null;
+			}
+
+			$reparray = json_decode($response['body']);
+
+			$repos = array_merge( $repos, $reparray );
+			if ( count( $reparray ) < 30 ) {
+				$morepages = false;
+			}
+			$page += 1;
+		}
+		return $repos;
+	}
+
+
+	/**
 	 * Stores the client id and client secret on an update profile action
 	 * @param  integer $user_id the current user id
 	 * @return void
 	 */
 	public function store_github_creds( $user_id ) {
 		if (self::$user->ID === $user_id) {
-			$client_id = $_REQUEST['hm_client_id'];
-			$client_secret = $_REQUEST['hm_client_secret'];
-			if ($client_id !== '') {
-				update_option('hm_client_id', $client_id);
+
+			if (array_key_exists( 'hm_purge_creds', $_REQUEST ) && $_REQUEST['hm_purge_creds'] === 'on' ) {
+
+				delete_option( 'hm_client_id' );
+				delete_option( 'hm_client_secret' );
+				delete_option( 'hm_token' );
+				delete_option( 'hm_user' );
+				delete_option( 'hm_last_error' );
+				delete_option( 'hm_the_organisation' );
+				delete_option( 'hm_organisations' );
+				return;
 			}
-			if ($client_secret !== '') {
-				update_option('hm_client_secret', $client_secret);
+			if (array_key_exists( 'hm_client_id', $_REQUEST ) ) {
+				update_option('hm_client_id', $_REQUEST['hm_client_id']);
+			}
+
+
+			if (array_key_exists( 'hm_client_secret', $_REQUEST ) ) {
+				update_option('hm_client_secret', $_REQUEST['hm_client_secret']);
+			}
+
+
+			if (array_key_exists( 'hm_the_organisation', $_REQUEST ) ) {
+				if(self::$gh_the_organisation !== $_REQUEST['hm_the_organisation'] ) {
+
+				}
+				update_option('hm_the_organisation', $_REQUEST['hm_the_organisation']);
 			}
 		}
 	}
@@ -407,7 +329,7 @@ class HMGithubOAuth {
 	 * to an access token.
 	 */
 	public function exchange_code_for_token() {
-		if (self::$user->ID === 1) {
+		if (self::$user->ID === 1 && array_key_exists('code', $_GET) && array_key_exists('state', $_GET) ) {
 			$code = $_GET['code'];
 			$state = $_GET['state'];
 			if ( $_SESSION['hm_state'] !== $state || !$code ) {
@@ -431,16 +353,47 @@ class HMGithubOAuth {
 					'cookies' => array()
 			    )
 			);
+
+			// if Github is down or there's another problem
+			if ( is_wp_error( $response ) ) {
+				return null;
+			}
+
 			$response_array = wp_parse_args( $response['body'] );
+
+			// If there's an access token in there
 			if ( array_key_exists( 'access_token', $response_array ) ) {
+
+				// Let's store the token
+				self::$token = $response_array['access_token'];
+
+				// Let's do some housekeeping first
 				delete_option( 'hm_last_error' );
 				update_option( 'hm_token', $response_array['access_token'] );
+
+				// Let's get the user connected to the token
+				$user_data = self::fetch_data( 'user' );
+
+				self::$gh_user = $user_data;
+
+				// Let's get the organisations the user belongs to
+				$organisations = self::fetch_data( 'organizations_url' );
+				self::$gh_organisations = $organisations;
+
+				update_option( 'hm_organisations', $organisations );
+				update_option( 'hm_user', $user_data );
+
+			// If there's an error in there
 			} elseif ( array_key_exists( 'error', $response_array ) ) {
+
 				$reponse_string = '<p><pre>' . $response_array['error'] . ':</pre> ';
 				$reponse_string .= $response_array['error_description'] . '. ';
 				$reposne_string .= '<a target="_blank" href="' . $response_array['error_uri'] . '">Click for more info</a>.';
-				update_option( 'hm_token', '' );
+				delete_option( 'hm_token' );
+				delete_option( 'hm_user' );
+				delete_option( 'hm_organisations' );
 				update_option( 'hm_last_error', $response_string );
+				self::$token = undefined;
 			}
 		}
 	}
@@ -451,7 +404,7 @@ class HMGithubOAuth {
 	 */
 	public function add_oauth_link() {
 		if (self::$user->ID === 1) {
-			$_SESSION['hm_state'] = md5( time() . $client_secret );
+			$_SESSION['hm_state'] = md5( time() . self::$client_secret );
 			?>
 			<h3>Github Auth Details</h3>
 			<table class="form-table">
@@ -477,11 +430,32 @@ class HMGithubOAuth {
 						<tr>
 							<th><label>Token</label></th>
 							<td><input type="text" value="<?php echo self::$token; ?>" disabled="disabled" class="regular-text" size="16"  /><br>
-							<span class="description">If this is here, you're good to go! :)</span></td>
+							<span class="description">Welcome, <?php echo self::$gh_user->name; ?>! You have successfully authenticated.</span></td>
+						</tr>
+						<tr>
+							<th><label for="hm_the_organisation">Select an Organisation</label></th>
+							<td>
+								<select name="hm_the_organisation" id="hm_the_organisation">
+									<option value="0">Please select one</option>
+									<?php
+									foreach ( self::$gh_organisations as $org) {
+										$_v = $org->repos_url;
+										?>
+										<option value="<?php echo $_v; ?>" <?php selected( self::$gh_the_organisation, $_v ); ?>><?php echo $org->login; ?></option>
+										<?php
+									}
+									?>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<th><label for="hm_purge_creds">Purge settings?</label></th>
+							<td>
+								<input type="checkbox" name="hm_purge_creds" id="hm_purge_creds">
+							</td>
 						</tr>
 						<?php
 					}
-
 					if( self::$errors ) {
 						?>
 						<tr>
@@ -490,13 +464,55 @@ class HMGithubOAuth {
 						</tr>
 						<?php
 					}
-
 					if( self::$client_id !== '' && self::$client_secret !== '' && ( self::$token === '' || self::$errors ) ) {
 						?>
 						<tr>
 							<th><label>Authorize Github</label></th>
 							<td>
 								<a href="https://github.com/login/oauth/authorize?client_id=<?php echo self::$client_id; ?>&amp;state=<?php echo $_SESSION['hm_state']; ?>&amp;scope=repo">Get started with authentication</a>
+							</td>
+						</tr>
+						<?php
+					}
+
+					if ( self::$is_authenticated ) {
+						?>
+						<tr>
+							<th><label for="">Authenticated?</label></th>
+							<td>Yes</td>
+						</tr>
+						<?php
+					} else {
+						?>
+						<tr>
+							<th><label for="">Authenticated?</label></th>
+							<td>Nope</td>
+						</tr>
+						<?php
+					}
+
+					if ( self::$gh_repositories ) {
+						?>
+						<tr>
+							<td><label>Repositories</label></td>
+							<td>
+								<p>
+									<?php
+
+									foreach (self::$gh_repositories as $repo) {
+										echo $repo->name . '<br />';
+									}
+									?>
+								</p>
+							</td>
+						</tr>
+						<?php
+					} else {
+						?>
+						<tr>
+							<th><label for="">Repositories</label></th>
+							<td>
+								<p>Fetching the data from Github, it might take a while.</p>
 							</td>
 						</tr>
 						<?php
@@ -510,10 +526,77 @@ class HMGithubOAuth {
 
 
 	/**
+	 * Gets data from the Github API. Route depends on the $type being passed in.
+	 * Values are from the user object. It will only be called if the access token
+	 * is set.
+	 * @param  string 			$type 		what we want to query for
+	 * @return array/object       			decoded json response
+	 */
+	public function fetch_data( $type ) {
+
+		$url = null;
+		switch( $type ) {
+			case 'user':
+				$url = self::$gh_api_url . '/user';
+				break;
+			case 'orgs':
+				$url = self::$gh_user->organizations_url;
+				break;
+			default:
+				$url = false;
+		}
+
+		if(!$url) {
+			return false;
+		}
+
+		$fetch = add_query_arg( array( 'access_token' => self::$token ), $url );
+
+		$response = wp_remote_get( $fetch );
+		if ( is_wp_error( $response ) || 200 !== intval( $response['response']['code'] ) ) {
+			return null;
+		}
+
+		return json_decode( $response['body'] );
+	}
+
+
+	/**
+	 * Check if we're still authenticated. Query the user. If 200, we're good, if anything
+	 * else, the token was removed, etc. If wp_error, network problem.
+	 * @return mixed booleam / wp error
+	 */
+	public function is_authenticated() {
+
+		$url = self::$gh_api_url . '/user';
+		$fetch = add_query_arg( array( 'access_token' => self::$token ), $url );
+		$response = wp_remote_get( $fetch );
+
+		// if it's not a 200, there's an auth problem
+		if ( is_wp_error( $response ) || 200 !== intval ($response['response']['code'] ) ) {
+			return false;
+		}
+
+		// otherwise we're good
+		return true;
+	}
+
+
+	/**
+	 * Method through which the widget can communicate with the internals of
+	 * this class.
+	 * @return array the daily statistics
+	 */
+	public function get_stats_for_widget() {
+		return self::$daily_stats;
+	}
+
+
+	/**
 	 * Gets instance, and returns, or just returns the instance.
 	 * @return object an instance of the class
 	 */
-	function get_instance() {
+	public static function get_instance() {
 		if ( null === self::$instance ) {
 			self::$instance = new self;
 		}
