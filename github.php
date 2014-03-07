@@ -7,9 +7,9 @@ session_start();
  * Author URI: http://hmn.md/
  */
 
-require_once dirname( __FILE__ ) . '/utils.php';
+// require_once dirname( __FILE__ ) . '/utils.php';
 require_once dirname( __FILE__ ) . '/tlc-transients.php';
-// require_once dirname( __FILE__ ) . '/class.github.widget.php';
+require_once dirname( __FILE__ ) . '/class.github.widget.php';
 
 /**
  * CLASS to handle OAuth interfacing with Github
@@ -81,6 +81,7 @@ class HMGithubOAuth {
 		}
 
 
+
 		/**
 		 * Pyramid of DOOM
 		 *
@@ -116,30 +117,6 @@ class HMGithubOAuth {
 
 		// Capture the code and exchange for tokens
 		add_action( 'init', array( $this, 'exchange_code_for_token' ) );
-	}
-
-
-	/**
-	 * Incremental sleep seconds. This is used in case Github returns with a 202 instead of a 200
-	 * when asking for commit statistics
-	 * @param  integer $step larger than 1
-	 * @return integer       still larger than 1
-	 */
-	function timeout_secs( $step ) {
-		// force it to be an integer
-		$step = intval( $step );
-
-		// totally arbitrary
-		if ( $step < 0 ) {
-			$step = 4;
-		}
-
-		if ( $step > 8 ) {
-			$step = 8;
-		}
-
-		$base = 1.4;
-		return ceil( pow( $base, $step ) );
 	}
 
 
@@ -228,9 +205,9 @@ class HMGithubOAuth {
 			return false;
 		}
 
-		$daily_stats = self::calculate_aggregate_daily_stats( json_decode( $response['body'] ) );
+		$repo_daily_stats = self::calculate_aggregate_daily_stats( json_decode( $response['body'] ) );
 
-		return $daily_stats;
+		return $repo_daily_stats;
 	}
 
 
@@ -301,6 +278,7 @@ class HMGithubOAuth {
 	 * @return array the user data
 	 */
 	public function get_user() {
+
 		return self::fetch_data( 'user' );
 	}
 
@@ -310,6 +288,7 @@ class HMGithubOAuth {
 	 * @return array organisation data
 	 */
 	public function get_organisations() {
+
 		return self::fetch_data( 'orgs' );
 	}
 
@@ -465,25 +444,41 @@ class HMGithubOAuth {
 						?>
 						<tr>
 							<th><label>Token</label></th>
-							<td><input type="text" value="<?php echo self::$token; ?>" disabled="disabled" class="regular-text" size="16"  /><br>
-							<span class="description">Welcome, <?php echo self::$gh_user->name; ?>! You have successfully authenticated.</span></td>
+							<td>
+								<input type="text" value="<?php echo self::$token; ?>" disabled="disabled" class="regular-text" size="16"  /><br>
+								<?php
+								if ( self::$gh_user ) {
+									?>
+									<span class="description">Welcome, <?php echo self::$gh_user->name; ?>! You have successfully authenticated.</span></td>
+									<?php
+								} else {
+									?>
+									<span class="description">Please reload the page!</span></td>
+									<?php
+								}
+								?>
 						</tr>
 						<tr>
 							<th><label for="hm_the_organisation">Select an Organisation</label></th>
 							<td>
 								<?php
-								foreach ( self::$gh_organisations as $org) {
-									$_v = $org->repos_url;
+								if ( self::$gh_organisations ) {
+									foreach ( self::$gh_organisations as $org) {
+										$_v = $org->repos_url;
+										?>
+										<label for="hm_the_org_<?php echo $org->login; ?>">
+											<input id="hm_the_org_<?php echo $org->login; ?>" type="checkbox" name="hm_the_organisation[]" value="<?php echo $_v; ?>" <?php self::multi_checked(self::$gh_the_organisation, $_v); ?>>
+										<?php echo $org->login;?></label><br/>
+										<?php
+									}
+								} else {
 									?>
-									<label for="hm_the_org_<?php echo $org->login; ?>">
-										<input id="hm_the_org_<?php echo $org->login; ?>" type="checkbox" name="hm_the_organisation[]" value="<?php echo $_v; ?>" <?php self::multi_checked(self::$gh_the_organisation, $_v); ?>>
-									<?php echo $org->login;?></label><br/>
+										<span class="description">Please wait, fetching data. Reload the page to try again.</span></td>
 									<?php
 								}
 								?>
 							</td>
 						</tr>
-
 						<?php
 					}
 					if( self::$errors ) {
@@ -627,16 +622,74 @@ class HMGithubOAuth {
 	 * this class.
 	 * @return array the daily statistics
 	 */
-	public function get_stats_for_widget() {
-		return self::$daily_stats;
+	public function get_stats_for_widget( $orgs = array() ) {
+		if( !is_array( $orgs ) ) {
+			return false;
+		}
+
+		$temp = array();
+
+		/**
+		 * Second pyramid of DOOM
+		 * @var [type]
+		 */
+		foreach (self::$gh_repositories as $org => $repositories) {
+			if ( in_array( $org, $orgs ) ) {
+				foreach ($repositories as $repo) {
+					if (array_key_exists( $repo->url, self::$total_stats ) ) {
+						foreach (self::$total_stats[$repo->url] as $day => $commit) {
+							if(!array_key_exists( $day, $temp ) ) {
+								$temp[$day] = $commit;
+							} else {
+								$temp[$day] += $commit;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return $temp;
 	}
 
 
+	/**
+	 * Reduces the organisations array to show only the ones that are available
+	 * @param  object $element an organisation's data
+	 * @return boolean          whether it's in or out
+	 */
+	private function get_current_organisations( $element ) {
+
+		return in_array( $element->repos_url, self::$gh_the_organisation );
+	}
+
+
+	/**
+	 * Returns all the organisations that the widget should be able to select
+	 * @return array 				an array of objects
+	 */
+	public function get_orgs_for_widget() {
+		$filtered_orgs = false;
+		if(self::$gh_organisations) {
+
+			$filtered_orgs = array_filter( self::$gh_organisations, array( $this, 'get_current_organisations' ) );
+		}
+		return $filtered_orgs;
+	}
+
+
+	/**
+	 * A helper function for multi checkboxes
+	 * @param  array 			$is    		what we have stored in the database
+	 * @param  string 			$input 		individual value of the checkbox
+	 * @return void        					echoes
+	 */
 	public function multi_checked( $is, $input ) {
 		if( in_array( $input, $is ) ) {
 			echo ' checked="checked"';
 		}
 	}
+
 
 	/**
 	 * Gets instance, and returns, or just returns the instance.

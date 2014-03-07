@@ -4,6 +4,10 @@ class HMGithubWidget extends WP_Widget {
     private $stats;
     private $total_commits;
     private $last30;
+    private $total_last30;
+    private $_hm_gh;
+    private $orgs;
+
 
     /**
      * Register widget with WordPress.
@@ -16,33 +20,27 @@ class HMGithubWidget extends WP_Widget {
 
         // Only get these if the class exists
         if(class_exists('HMGithubOAuth')) {
-            $_stats = HMGithubOAuth::get_instance();
-            $this->stats = $_stats->get_stats_for_widget();
-
-            if(is_array($this->stats)) {
-                $this->total_commits = array_sum( $this->stats );
-            }
-            $this->last30 = $this->get_last30();
-            if(is_array($this->last30)) {
-                $this->total_last30 = array_sum($this->last30);
-            }
+            $this->_hm_gh = HMGithubOAuth::get_instance();
+            $this->orgs = $this->_hm_gh->get_orgs_for_widget();
         }
 
-        // wp_die( es_preit( array( $this->stats, $this->total_commits ), false ) );
         parent::__construct(
             'hm_github_widget', // Base ID
             __('Github Statistics', 'hm_github_widget_textdomain'), // Name
             array( 'description' => __( 'Displays total commits and commits in last 30 days', 'hm_github_widget_textdomain' ), ) // Args
         );
-
-
         add_action( 'wp_enqueue_scripts', array( $this, 'add_style' ) );
     }
 
+
+    /**
+     * Include the CSS file
+     */
     public function add_style() {
         wp_register_style( 'hm_github_css', plugins_url( 'github.widget.css' , __FILE__ ) );
         wp_enqueue_style( 'hm_github_css' );
     }
+
 
     /**
      * Front-end display of widget.
@@ -58,6 +56,20 @@ class HMGithubWidget extends WP_Widget {
 
         echo $args['before_widget'];
 
+        if ( isset( $instance[ 'orgs' ] ) ) {
+            $orgs = $instance[ 'orgs' ];
+        } else {
+            $orgs = array();
+        }
+        $this->stats = $this->_hm_gh->get_stats_for_widget( $orgs );
+        if(is_array($this->stats)) {
+            $this->total_commits = array_sum( $this->stats );
+        }
+        $this->last30 = $this->get_last30();
+        if(is_array($this->last30)) {
+            $this->total_last30 = array_sum($this->last30);
+        }
+
         if ( ! empty( $title ) ) {
             if( ! empty( $link ) ) {
                 echo '<a href="' . $link . '">';
@@ -67,20 +79,18 @@ class HMGithubWidget extends WP_Widget {
                 echo '</a>';
             }
         }
-
+        $id = wp_generate_password(5);
         ?>
 
         <div class="hm-github-graph cf">
             <?php
             $highest = $this->get_highest();
-
             foreach ($this->last30 as $commits) {
                 $percentage = number_format( 100 * ($commits / $highest), 4);
                 ?>
                 <div class="bar" style="height: <?php echo $percentage; ?>%;"></div>
                 <?php
             }
-
             ?>
         </div>
         <p class="hm-total-commits">
@@ -101,7 +111,6 @@ class HMGithubWidget extends WP_Widget {
             ?>
         </p>
         <?php
-
         echo $args['after_widget'];
     }
 
@@ -120,21 +129,50 @@ class HMGithubWidget extends WP_Widget {
             $title = __( 'New title', 'hm_github_widget_textdomain' );
         }
 
+        if ( isset( $instance[ 'orgs' ] ) ) {
+            $orgs = $instance[ 'orgs' ];
+        } else {
+            $orgs = array();
+        }
+
+
         if ( isset( $instance[ 'link' ] ) ) {
             $link = $instance[ 'link' ];
         } else {
             $link = '';
         }
 
+        $this->stats = $this->_hm_gh->get_stats_for_widget( $orgs );
         ?>
         <p>
-        <label for="<?php echo $this->get_field_id( 'title' ); ?>"><?php _e( 'Title:' ); ?></label>
-        <input class="widefat" id="<?php echo $this->get_field_id( 'title' ); ?>" name="<?php echo $this->get_field_name( 'title' ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>">
+            <label for="<?php echo $this->get_field_id( 'title' ); ?>"><?php _e( 'Title:' ); ?></label>
+            <input class="widefat" id="<?php echo $this->get_field_id( 'title' ); ?>" name="<?php echo $this->get_field_name( 'title' ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>">
         </p>
 
         <p>
-        <label for="<?php echo $this->get_field_id( 'link' ); ?>"><?php _e( 'Title:' ); ?></label>
-        <input class="widefat" id="<?php echo $this->get_field_id( 'link' ); ?>" name="<?php echo $this->get_field_name( 'link' ); ?>" type="text" value="<?php echo esc_attr( $link ); ?>">
+            <label for="<?php echo $this->get_field_id( 'link' ); ?>"><?php _e( 'Title:' ); ?></label>
+            <input class="widefat" id="<?php echo $this->get_field_id( 'link' ); ?>" name="<?php echo $this->get_field_name( 'link' ); ?>" type="text" value="<?php echo esc_attr( $link ); ?>">
+        </p>
+
+        <p>
+            <label>Select an Organisation to show aggregate stats for</label>
+            <ul>
+                <?php
+                foreach ( $this->orgs as $org ) {
+                    $_v = $org->repos_url;
+                    $id = wp_generate_password(5);
+
+                    ?>
+                    <li>
+                        <label for="<?php echo $this->get_field_id( 'orgs' ) . $id; ?>">
+                            <input id="<?php echo $this->get_field_id( 'orgs' ) . $id; ?>" type="checkbox" name="<?php echo $this->get_field_name('orgs'); ?>[]" value="<?php echo $_v; ?>" <?php $this->multi_checked( $orgs, $_v); ?>>
+                            <?php echo $org->login;?>
+                        </label>
+                    </li>
+                    <?php
+                }
+                ?>
+            </ul>
         </p>
         <?php
     }
@@ -154,6 +192,7 @@ class HMGithubWidget extends WP_Widget {
         $instance = array();
         $instance['title'] = ( ! empty( $new_instance['title'] ) ) ? strip_tags( $new_instance['title'] ) : '';
         $instance['link'] = ( ! empty( $new_instance['link'] ) ) ? strip_tags( $new_instance['link'] ) : '';
+        $instance['orgs'] = ( ! empty( $new_instance['orgs'] ) ) ? $new_instance['orgs'] : false;
 
         return $instance;
     }
@@ -187,11 +226,25 @@ class HMGithubWidget extends WP_Widget {
         rsort( $temparray );
         return $temparray[0];
     }
+
+    /**
+     * A helper function for multi checkboxes
+     * @param  array            $is         what we have stored in the database
+     * @param  string           $input      individual value of the checkbox
+     * @return void                         echoes
+     */
+    public function multi_checked( $is, $input ) {
+        if( in_array( $input, $is ) ) {
+            echo ' checked="checked"';
+        }
+    }
 }
 
 
-
-function register_foo_widget() {
+/**
+ * Function that registers the widget. Self documenting code is self documenting.
+ */
+function register_hm_github_widget() {
     register_widget( 'HMGithubWidget' );
 }
-add_action( 'widgets_init', 'register_foo_widget' );
+add_action( 'widgets_init', 'register_hm_github_widget' );
