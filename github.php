@@ -7,9 +7,9 @@ session_start();
  * Author URI: http://hmn.md/
  */
 
-// require_once dirname( __FILE__ ) . '/utils.php';
+require_once dirname( __FILE__ ) . '/utils.php';
 require_once dirname( __FILE__ ) . '/tlc-transients.php';
-require_once dirname( __FILE__ ) . '/class.github.widget.php';
+// require_once dirname( __FILE__ ) . '/class.github.widget.php';
 
 /**
  * CLASS to handle OAuth interfacing with Github
@@ -65,23 +65,45 @@ class HMGithubOAuth {
 		self::$gh_organisations = self::get_hm_option( 'hm_organisations', array( $this, 'get_organisations' ), false );
 		self::$is_authenticated = self::get_hm_option( 'hm_authenticated', array( $this, 'is_authenticated' ), false, $authexpiry );
 
+		// start empty, will be populated from transient
+		self::$gh_repositories = array();
 
-		// only run these when there's a point in running them
+		// start empty, will be populated from transient
+		self::$total_stats = array();
+
+		// If I have the organisations selected, let's get the repository data
 		if(!empty(self::$gh_the_organisation)) {
-			self::$gh_repositories = self::get_hm_option( 'hm_repositories', array( $this, 'get_repos' ) );
+			foreach (self::$gh_the_organisation as $url) {
+
+				// $url is the link to the organisation.
+				self::$gh_repositories[$url] = self::get_hm_option( 'hm_repositories_in_org_' . md5($url), array( $this, 'get_repos' ), array( $url ) );
+			}
 		}
 
-		if(self::$gh_repositories) {
 
-			self::$total_stats = self::get_hm_option( 'hm_total_stats', array( $this, 'get_stats' ) );
+		/**
+		 * Pyramid of DOOM
+		 *
+		 * For all the chosen organisations (if it's not empty), and for all the repositories within
+		 * those organisations (if that is not false (pending), or empty), get the stats for them
+		 */
+		if(!empty( self::$gh_repositories) ) {
+
+			foreach (self::$gh_repositories as $url => $repos) {
+
+				// url is the organisation, repos is the repositories belonging to that organisation
+				if(!empty($repos) && false !== $repos) {
+
+					// to get the data for each individual repository, we need to iterate over them
+					foreach ($repos as $repo) {
+
+						// This contains the stats with timestamps
+						self::$total_stats[$repo->url] = self::get_hm_option( 'hm_total_stats_' . md5($repo->url), array( $this, 'get_repo_stat' ), array( $repo->url ) );
+					}
+				}
+			}
 		}
 
-
-
-
-		if(self::$total_stats) {
-			self::$daily_stats = self::get_hm_option( 'hm_daily_stats', array( $this, 'calculate_aggregate_daily_stats'));
-		}
 
 		/**
 		 * User related bits
@@ -96,23 +118,6 @@ class HMGithubOAuth {
 		add_action( 'init', array( $this, 'exchange_code_for_token' ) );
 	}
 
-
-	/**
-	 * Get the last year's commit activity for each repository we have stored
-	 * @return array see above line
-	 */
-	public function get_stats() {
-		// placeholder array
-		$stats = array();
-		foreach (self::$gh_repositories as $repository) {
-			$stats[$repository->name] = tlc_transient( 'hm_stats_' . md5($repository->name ) )
-				->updates_with( array( $this, 'get_repo_stat' ), array( $repository->url, md5($repository->name ) ) )
-				->expires_in( 86400 )
-				->background_only()
-				->get();
-		}
-		return $stats;
-	}
 
 	/**
 	 * Incremental sleep seconds. This is used in case Github returns with a 202 instead of a 200
@@ -139,15 +144,61 @@ class HMGithubOAuth {
 
 
 	/**
+	 * Gets all the repositories for an organisation. Handles paginated Github query
+	 * @return array all the repository data
+	 */
+	public function get_repos( $url ) {
+		// If we don't have an organisation, let's not return anything
+		// if (empty(self::$gh_the_organisation ) ) {
+		// 	return false;
+		// }
+
+		if(empty($url)) {
+			return false;
+		}
+		// wp_die( es_preit( array( $url ), false ) );
+
+		$repos = array();
+
+		// foreach (self::$gh_the_organisation as $url) {
+		$page = 1;
+		$morepages = true;
+		while ( $morepages ) {
+			$fetch = add_query_arg( array(
+				'access_token' => self::$token,
+				'page' => $page
+			), $url );
+
+			$response = wp_remote_get( $fetch );
+
+			if ( is_wp_error( $response ) || 200 !== intval( $response['response']['code'] ) ) {
+				return null;
+			}
+
+			$reparray = json_decode($response['body']);
+
+			$repos = array_merge( $repos, $reparray );
+			if ( count( $reparray ) < 30 ) {
+				$morepages = false;
+			}
+			$page += 1;
+		}
+		// }
+		// wp_die( es_preit( array( $repos ), false ) );
+		return $repos;
+	}
+
+
+	/**
 	 * Queries Github's API for a specific repository's statistics.
 	 *
 	 * Response might be 202, which means Github is still compiling data. I'm retrying in that case
 	 *
 	 * @param  string $url  the api url of the repo
-	 * @param  string $name the name of the repo
+	 * todelete@param  string $name the name of the repo
 	 * @return array/object       the commit history of the repo for the last 1 year
 	 */
-	public function get_repo_stat( $url, $name ) {
+	public function get_repo_stat( $url ) {
 		// construct the url for commit activity
 		$url = $url . '/stats/commit_activity';
 
@@ -167,28 +218,19 @@ class HMGithubOAuth {
 			return null;
 		}
 
-		// As long as Github's working on it...
-		while( 202 === intval( $response['response']['code'] ) ) {
-			$sleepfor = self::timeout_secs($step);
-			wp_mail('gabor@javorszky.co.uk', 'sleeping', 'sleeping for ' . $sleepfor . ' seconds while fetching ' . $url);
+		$response = wp_remote_get( $fetch );
 
-			// If this is the first try, don't sleep
-			if($step !== 0 ) {
-				sleep($sleepfor);
-			}
-
-			$response = wp_remote_get( $fetch );
-
-			// If it's an error, or we've tried for too long, exit
-			if ( is_wp_error( $response ) || $step > 8 ) {
-				return null;
-			}
-
-			// Try again
-			$step++;
+		// If it's an error, or we've tried for too long, exit
+		if (
+			is_wp_error( $response )
+			|| 202 === intval( $response['response']['code'] )
+		) {
+			return false;
 		}
 
-		return json_decode( $response['body'] );
+		$daily_stats = self::calculate_aggregate_daily_stats( json_decode( $response['body'] ) );
+
+		return $daily_stats;
 	}
 
 
@@ -200,22 +242,22 @@ class HMGithubOAuth {
 	 * year even if the repo is 4 months old.)
 	 * @return array sanitized daily stats
 	 */
-	public function calculate_aggregate_daily_stats() {
+	public function calculate_aggregate_daily_stats( $repostats ) {
 		$d = 60 * 60 * 24;
 		$_stats = array();
 
-		foreach (self::$total_stats as $reponame => $repostats) {
-			foreach ($repostats as $week) {
-				foreach ($week->days as $index => $day) {
-					$_k = $week->week + ($index * $d);
-					if(array_key_exists($_k, $_stats)) {
-						$_stats[$_k] += $day;
-					} else {
-						$_stats[$_k] = $day;
-					}
+		// foreach (self::$total_stats as $reponame => $repostats) {
+		foreach ($repostats as $week) {
+			foreach ($week->days as $index => $day) {
+				$_k = $week->week + ($index * $d);
+				if(array_key_exists($_k, $_stats)) {
+					$_stats[$_k] += $day;
+				} else {
+					$_stats[$_k] = $day;
 				}
 			}
 		}
+		// }
 
 		// Kill the future
 		foreach ($_stats as $key => $value) {
@@ -236,16 +278,17 @@ class HMGithubOAuth {
 	 * @param  boolean 			$background 	whether to update in background
 	 * @return mixed              				the data stored
 	 */
-	public function get_hm_option( $name, $update, $background = true, $expires = 86400  ) {
+	public function get_hm_option( $name, $update, $args = null, $background = true, $expires = 86400  ) {
 		if ( $background ) {
 			$option = tlc_transient( $name )
-				->updates_with( $update )
+				->updates_with( $update, $args )
 				->expires_in( $expires )
+				->extend_on_fail( 5 )
 				->background_only()
 				->get();
 		} else {
 			$option = tlc_transient( $name )
-				->updates_with( $update )
+				->updates_with( $update, $args )
 				->expires_in( $expires )
 				->get();
 		}
@@ -268,46 +311,6 @@ class HMGithubOAuth {
 	 */
 	public function get_organisations() {
 		return self::fetch_data( 'orgs' );
-	}
-
-
-	/**
-	 * Gets all the repositories for an organisation. Handles paginated Github query
-	 * @return array all the repository data
-	 */
-	public function get_repos() {
-		// If we don't have an organisation, let's not return anything
-		if (!isset(self::$gh_the_organisation ) ) {
-			return false;
-		}
-
-		$repos = array();
-
-		foreach (self::$gh_the_organisation as $url) {
-			$page = 1;
-			$morepages = true;
-			while ( $morepages ) {
-				$fetch = add_query_arg( array(
-					'access_token' => self::$token,
-					'page' => $page
-				), $url );
-
-				$response = wp_remote_get( $fetch );
-
-				if ( is_wp_error( $response ) || 200 !== intval( $response['response']['code'] ) ) {
-					return null;
-				}
-
-				$reparray = json_decode($response['body']);
-
-				$repos = array_merge( $repos, $reparray );
-				if ( count( $reparray ) < 30 ) {
-					$morepages = false;
-				}
-				$page += 1;
-			}
-		}
-		return $repos;
 	}
 
 
