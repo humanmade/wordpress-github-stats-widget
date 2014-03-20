@@ -1,5 +1,5 @@
 <?php
-session_start();
+
 /**
  * Plugin Name: Wordpress GitHub Stats Widget
  * Description: Provides template functions to show GitHub statistics
@@ -347,7 +347,7 @@ class HMGithubOAuth {
 		if (self::$user->ID === 1 && array_key_exists('code', $_GET) && array_key_exists('state', $_GET) ) {
 			$code = $_GET['code'];
 			$state = $_GET['state'];
-			if ( $_SESSION['hm_state'] !== $state || !$code ) {
+			if( !wp_verify_nonce( $state, '_hm_github_oauth' ) ) {
 				return;
 			}
 
@@ -419,7 +419,8 @@ class HMGithubOAuth {
 	 */
 	public function add_oauth_link() {
 		if (self::$user->ID === 1) {
-			$_SESSION['hm_state'] = md5( time() . self::$client_secret );
+			$nonce = wp_create_nonce( '_hm_github_oauth' );
+
 			?>
 			<h3>Github Auth Details</h3>
 			<table class="form-table">
@@ -494,7 +495,7 @@ class HMGithubOAuth {
 						<tr>
 							<th><label>Authorize Github</label></th>
 							<td>
-								<a href="https://github.com/login/oauth/authorize?client_id=<?php echo self::$client_id; ?>&amp;state=<?php echo $_SESSION['hm_state']; ?>&amp;scope=repo">Get started with authentication</a>
+								<a href="https://github.com/login/oauth/authorize?client_id=<?php echo self::$client_id; ?>&amp;state=<?php echo $nonce; ?>&amp;scope=repo">Get started with authentication</a>
 							</td>
 						</tr>
 						<?php
