@@ -633,10 +633,17 @@ class HMGithubOAuth {
 		 * Second pyramid of DOOM
 		 * @var [type]
 		 */
+		if(empty(self::$gh_repositories) || !is_array(self::$gh_repositories)) {
+			return $temp;
+		}
 		foreach (self::$gh_repositories as $org => $repositories) {
+			// wp_die( es_preit( array( self::$gh_repositories ), false ) );
 			if ( in_array( $org, $orgs ) ) {
 				foreach ($repositories as $repo) {
 					if (array_key_exists( $repo->url, self::$total_stats ) ) {
+						if(empty(self::$total_stats[$repo->url])) {
+							continue;
+						}
 						foreach (self::$total_stats[$repo->url] as $day => $commit) {
 							if(!array_key_exists( $day, $temp ) ) {
 								$temp[$day] = $commit;
