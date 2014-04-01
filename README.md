@@ -3,11 +3,11 @@
 ## Configuration
 You need to be user with ID 1 to configure the plugin.
 
-Create an application on your Github profile. Go here: [https://github.com/settings/applications](https://github.com/settings/applications) and click Register New Application.
+Create a personal token on your Github profile. Go here: [https://github.com/settings/applications](https://github.com/settings/applications) and click Generate new token. Have `repo`, `public_repo` and `read:org` ticked, the rest are not necessary.
 
-Navigate to Users -> Your profile, and scroll down towards the bottom. Copy and paste the client ID and client secret from your Github application, and click update. A link will appear. Click on the link, which will take you to Github's OAuth prompt, and authorize access. The plugin only reads data from Github, it does not write anything to it.
+Navigate to Users -> Your profile, and scroll down towards the bottom. Copy and paste the personal token into the field. After saving, you should see all the organisations your Github user belongs to. Select the ones you will potentially want to gather data from, and click save.
 
-You may have to wait and refresh until WordPress fetches all the organisations you belong to. Tick the boxes you want to count, and click Update Profile again. This will start data gathering. Depending on the number of repositories you have across the organisations, this might take a while.
+WordPress will go and fetch all the usage statistics. This might take a while, and you might have partial data from some of the repositories before all of them arrive. It should be a 5-10 minute process depending on your server's connection speed, Github's availability, the number of organisations and the number of repositories in those organisations.
 
 If you wish to reset all the settings, tick Purge Settings, and update.
 

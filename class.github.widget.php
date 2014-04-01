@@ -25,9 +25,9 @@ class HMGithubWidget extends WP_Widget {
         }
 
         parent::__construct(
-            'hm_github_widget', // Base ID
-            __('Github Statistics', 'hm_github_widget_textdomain'), // Name
-            array( 'description' => __( 'Displays total commits and commits in last 30 days', 'hm_github_widget_textdomain' ), ) // Args
+            'hm_github_widget',
+            __('Github Statistics', 'hm_github_widget_textdomain'),
+            array( 'description' => __( 'Displays total commits and commits in last 30 days', 'hm_github_widget_textdomain' ), )
         );
         add_action( 'wp_enqueue_scripts', array( $this, 'add_style' ) );
     }
@@ -72,9 +72,9 @@ class HMGithubWidget extends WP_Widget {
 
         if ( ! empty( $title ) ) {
             if( ! empty( $link ) ) {
-                echo '<a href="' . $link . '">';
+                echo '<a href="' . esc_url( $link ) . '">';
             }
-            echo $args['before_title'] . $title . $args['after_title'];
+            echo $args['before_title'] . sanitize_text_field( $title ) . $args['after_title'];
             if( ! empty( $link ) ) {
                 echo '</a>';
             }
@@ -96,9 +96,9 @@ class HMGithubWidget extends WP_Widget {
         <p class="hm-total-commits">
             <?php
             if( $this->total_commits ) {
-                echo 'Total commits: ' . $this->total_commits;
+                echo 'Total commits: ' . $this->total_commits . '.';
             } else {
-                echo 'Total commits unavailable at this time';
+                echo 'Total commits unavailable at this time.';
             }
             ?>
         </p>
@@ -106,7 +106,7 @@ class HMGithubWidget extends WP_Widget {
             <?php
             if( $this->total_last30 ) {
                 echo $this->total_last30 . ' commits in last 30 days.';
-                echo '<span>Commits per day: ' . number_format( (intval( $this->total_last30 ) / 30 ), 2) . '</span>';
+                echo ' <span>Commits per day: ' . number_format( (intval( $this->total_last30 ) / 30 ), 2) . '</span>';
             }
             ?>
         </p>
@@ -146,35 +146,43 @@ class HMGithubWidget extends WP_Widget {
         ?>
         <p>
             <label for="<?php echo $this->get_field_id( 'title' ); ?>"><?php _e( 'Title:' ); ?></label>
-            <input class="widefat" id="<?php echo $this->get_field_id( 'title' ); ?>" name="<?php echo $this->get_field_name( 'title' ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>">
+            <input class="widefat" id="<?php echo $this->get_field_id( 'title' ); ?>" name="<?php echo $this->get_field_name( 'title' ); ?>" type="text" value="<?php echo sanitize_text_field( $title ); ?>">
         </p>
 
         <p>
-            <label for="<?php echo $this->get_field_id( 'link' ); ?>"><?php _e( 'Title:' ); ?></label>
-            <input class="widefat" id="<?php echo $this->get_field_id( 'link' ); ?>" name="<?php echo $this->get_field_name( 'link' ); ?>" type="text" value="<?php echo esc_attr( $link ); ?>">
+            <label for="<?php echo $this->get_field_id( 'link' ); ?>"><?php _e( 'URL to link to:' ); ?></label>
+            <input class="widefat" id="<?php echo $this->get_field_id( 'link' ); ?>" name="<?php echo $this->get_field_name( 'link' ); ?>" type="text" value="<?php echo esc_url( $link ); ?>">
         </p>
 
-        <p>
-            <label>Select an Organisation to show aggregate stats for</label>
-            <ul>
-                <?php
-                foreach ( $this->orgs as $org ) {
-                    $_v = $org->repos_url;
-                    $id = wp_generate_password(5);
-
-                    ?>
-                    <li>
-                        <label for="<?php echo $this->get_field_id( 'orgs' ) . $id; ?>">
-                            <input id="<?php echo $this->get_field_id( 'orgs' ) . $id; ?>" type="checkbox" name="<?php echo $this->get_field_name('orgs'); ?>[]" value="<?php echo $_v; ?>" <?php $this->multi_checked( $orgs, $_v); ?>>
-                            <?php echo $org->login;?>
-                        </label>
-                    </li>
-                    <?php
-                }
-                ?>
-            </ul>
-        </p>
         <?php
+        if($this->orgs) {
+            ?>
+            <p>
+                <label>Select an Organisation to show aggregate stats for</label>
+                <ul>
+                    <?php
+                    foreach ( $this->orgs as $org ) {
+                        $_v = $org->repos_url;
+                        $id = wp_generate_password(5);
+
+                        ?>
+                        <li>
+                            <label for="<?php echo $this->get_field_id( 'orgs' ) . $id; ?>">
+                                <input id="<?php echo $this->get_field_id( 'orgs' ) . $id; ?>" type="checkbox" name="<?php echo $this->get_field_name('orgs'); ?>[]" value="<?php echo $_v; ?>" <?php $this->multi_checked( $orgs, $_v); ?>>
+                                <?php echo $org->login;?>
+                            </label>
+                        </li>
+                        <?php
+                    }
+                    ?>
+                </ul>
+            </p>
+            <?php
+        } else {
+            ?>
+            <p>You have no organisations enabled. See to <a href="<?php echo admin_url('profile.php'); ?>">your profile page</a> first!</p>
+            <?php
+        }
     }
 
 
@@ -190,8 +198,8 @@ class HMGithubWidget extends WP_Widget {
      */
     public function update( $new_instance, $old_instance ) {
         $instance = array();
-        $instance['title'] = ( ! empty( $new_instance['title'] ) ) ? strip_tags( $new_instance['title'] ) : '';
-        $instance['link'] = ( ! empty( $new_instance['link'] ) ) ? strip_tags( $new_instance['link'] ) : '';
+        $instance['title'] = ( ! empty( $new_instance['title'] ) ) ? sanitize_text_field( $new_instance['title'] ) : '';
+        $instance['link'] = ( ! empty( $new_instance['link'] ) ) ? esc_url( $new_instance['link'] ) : '';
         $instance['orgs'] = ( ! empty( $new_instance['orgs'] ) ) ? $new_instance['orgs'] : false;
 
         return $instance;
@@ -227,6 +235,7 @@ class HMGithubWidget extends WP_Widget {
         return $temparray[0];
     }
 
+
     /**
      * A helper function for multi checkboxes
      * @param  array            $is         what we have stored in the database
@@ -234,8 +243,10 @@ class HMGithubWidget extends WP_Widget {
      * @return void                         echoes
      */
     public function multi_checked( $is, $input ) {
-        if( in_array( $input, $is ) ) {
-            echo ' checked="checked"';
+        if( is_array( $is ) ) {
+            if( in_array( $input, $is ) ) {
+                echo ' checked="checked"';
+            }
         }
     }
 }

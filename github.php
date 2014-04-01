@@ -7,7 +7,6 @@
  * Author URI: http://hmn.md/
  */
 
-// require_once dirname( __FILE__ ) . '/utils.php';
 require_once dirname( __FILE__ ) . '/tlc-transients.php';
 require_once dirname( __FILE__ ) . '/class.github.widget.php';
 
@@ -22,21 +21,18 @@ class HMGithubOAuth {
 	protected static $user = null;
 
 	// The github credentials
-	protected static $client_id;
-	protected static $client_secret;
 	protected static $token;
-	protected static $errors;
+	protected static $is_authenticated = false;
 
 	// Github API Settings
 	protected static $gh_auth_url = 'https://github.com/login/oauth/authorize';
 	protected static $gh_api_url = 'https://api.github.com';
 
 	// Github API Responses
-	protected static $gh_user;
-	protected static $gh_organisations;
+	protected static $gh_user = false;
+	protected static $gh_organisations = false;
 	protected static $gh_the_organisation;
 	protected static $gh_repositories;
-	protected static $is_authenticated;
 	protected static $total_stats;
 	protected static $daily_stats;
 
@@ -47,23 +43,26 @@ class HMGithubOAuth {
 	public function __construct() {
 		global $current_user;
 		get_currentuserinfo();
-
-		// how often should we check for authorized status
-		$authexpiry = 30 * MINUTE_IN_SECONDS;
-
-
 		self::$user = $current_user;
-		self::$client_id = get_option( 'hm_client_id', '' );
-		self::$client_secret = get_option( 'hm_client_secret', '' );
-		self::$token = get_option( 'hm_token', '' );
-		self::$errors = get_option( 'hm_last_error', false );
+		self::$token = get_option( 'hm_personal_token', '' );
 		self::$gh_the_organisation = get_option( 'hm_the_organisation', '' );
 
+		// I need to always display the admin side of things
+		add_action( 'show_user_profile', array( $this, 'add_oauth_link' ) );
 
-		// cached, might change
-		self::$gh_user = self::get_hm_option( 'hm_user', array( $this, 'get_user' ), false );
-		self::$gh_organisations = self::get_hm_option( 'hm_organisations', array( $this, 'get_organisations' ), false );
-		self::$is_authenticated = self::get_hm_option( 'hm_authenticated', array( $this, 'is_authenticated' ), false, $authexpiry );
+		// And I need to always be able to store shit
+		add_action( 'personal_options_update', array( $this, 'store_github_creds' ) );
+
+		if( self::$token !== '' ) {
+			// This fetches the user and the orgs
+			self::get_basic_data();
+
+			$authexpiry = 5 * MINUTE_IN_SECONDS;
+			self::$is_authenticated = self::get_hm_option( 'hm_authenticated', array( $this, 'is_authenticated' ), false, $authexpiry );
+			if(!self::$is_authenticated) {
+				self::$is_authenticated = self::is_authenticated();
+			}
+		}
 
 		// start empty, will be populated from transient
 		self::$gh_repositories = array();
@@ -74,12 +73,10 @@ class HMGithubOAuth {
 		// If I have the organisations selected, let's get the repository data
 		if(!empty(self::$gh_the_organisation)) {
 			foreach (self::$gh_the_organisation as $url) {
-
 				// $url is the link to the organisation.
 				self::$gh_repositories[$url] = self::get_hm_option( 'hm_repositories_in_org_' . md5($url), array( $this, 'get_repos' ), array( $url ) );
 			}
 		}
-
 
 
 		/**
@@ -104,19 +101,26 @@ class HMGithubOAuth {
 				}
 			}
 		}
+	}
 
 
-		/**
-		 * User related bits
-		 */
-		// Output the necessary fields
-		add_action( 'show_user_profile', array( $this, 'add_oauth_link' ) );
+	/**
+	 * Gets user and organisation data if personal token is set.
+	 */
+	private function get_basic_data() {
 
-		// Save the client ID and client secrets if userid = 1
-		add_action( 'personal_options_update', array( $this, 'store_github_creds' ) );
-
-		// Capture the code and exchange for tokens
-		add_action( 'init', array( $this, 'exchange_code_for_token' ) );
+		// Let's get the user and store it if we haven't yet
+		self::$gh_user = self::get_hm_option( 'hm_user', array( $this, 'get_user' ), false );
+		if(!self::$gh_user) {
+			self::$gh_user = self::get_user();
+		}
+		// Let's get all the organisations and store it if we haven't yet
+		if(self::$gh_user) {
+			self::$gh_organisations = self::get_hm_option( 'hm_organisations', array( $this, 'get_organisations' ) );
+			if(!self::$gh_organisations) {
+				self::$gh_organisations = self::get_organisations();
+			}
+		}
 	}
 
 
@@ -125,19 +129,13 @@ class HMGithubOAuth {
 	 * @return array all the repository data
 	 */
 	public function get_repos( $url ) {
-		// If we don't have an organisation, let's not return anything
-		// if (empty(self::$gh_the_organisation ) ) {
-		// 	return false;
-		// }
 
 		if(empty($url)) {
 			return false;
 		}
-		// wp_die( es_preit( array( $url ), false ) );
 
 		$repos = array();
 
-		// foreach (self::$gh_the_organisation as $url) {
 		$page = 1;
 		$morepages = true;
 		while ( $morepages ) {
@@ -160,8 +158,6 @@ class HMGithubOAuth {
 			}
 			$page += 1;
 		}
-		// }
-		// wp_die( es_preit( array( $repos ), false ) );
 		return $repos;
 	}
 
@@ -172,15 +168,11 @@ class HMGithubOAuth {
 	 * Response might be 202, which means Github is still compiling data. I'm retrying in that case
 	 *
 	 * @param  string $url  the api url of the repo
-	 * todelete@param  string $name the name of the repo
 	 * @return array/object       the commit history of the repo for the last 1 year
 	 */
 	public function get_repo_stat( $url ) {
 		// construct the url for commit activity
 		$url = $url . '/stats/commit_activity';
-
-		// needed in case we need to sleep()
-		$step = 0;
 
 		// let's add the access token to the url
 		$fetch = add_query_arg( array(
@@ -223,7 +215,6 @@ class HMGithubOAuth {
 		$d = 60 * 60 * 24;
 		$_stats = array();
 
-		// foreach (self::$total_stats as $reponame => $repostats) {
 		foreach ($repostats as $week) {
 			foreach ($week->days as $index => $day) {
 				$_k = $week->week + ($index * $d);
@@ -234,9 +225,7 @@ class HMGithubOAuth {
 				}
 			}
 		}
-		// }
 
-		// Kill the future
 		foreach ($_stats as $key => $value) {
 			if ($key > time() ) {
 				unset( $_stats[$key] );
@@ -278,7 +267,6 @@ class HMGithubOAuth {
 	 * @return array the user data
 	 */
 	public function get_user() {
-
 		return self::fetch_data( 'user' );
 	}
 
@@ -288,8 +276,26 @@ class HMGithubOAuth {
 	 * @return array organisation data
 	 */
 	public function get_organisations() {
-
 		return self::fetch_data( 'orgs' );
+	}
+
+
+	/**
+	 * Delete all the important bits when purging.
+	 */
+	private function purge_settings() {
+		delete_option( 'hm_user' );
+		delete_option( 'hm_the_organisation' );
+		delete_option( 'hm_organisations' );
+		delete_option( 'hm_personal_token' );
+
+		delete_transient( 'tlc__' . md5( 'hm_authenticated' ) );
+		delete_transient( 'tlc__' . md5( 'hm_user' ) );
+		delete_transient( 'tlc__' . md5( 'hm_organisations' ) );
+		delete_transient( 'timeout_tlc__' . md5( 'hm_authenticated' ) );
+		delete_transient( 'timeout_tlc__' . md5( 'hm_user' ) );
+		delete_transient( 'timeout_tlc__' . md5( 'hm_organisations' ) );
+		return;
 	}
 
 
@@ -299,116 +305,22 @@ class HMGithubOAuth {
 	 * @return void
 	 */
 	public function store_github_creds( $user_id ) {
-		if (self::$user->ID === $user_id) {
+		if (self::$user->ID === $user_id && $_REQUEST['submit']) {
 
-			if (array_key_exists( 'hm_purge_creds', $_REQUEST ) && $_REQUEST['hm_purge_creds'] === 'on' ) {
-
-				delete_option( 'hm_client_id' );
-				delete_option( 'hm_client_secret' );
-				delete_option( 'hm_token' );
-				delete_option( 'hm_user' );
-				delete_option( 'hm_last_error' );
-				delete_option( 'hm_the_organisation' );
-				delete_option( 'hm_organisations' );
-
-				delete_transient( 'tlc__' . md5( 'hm_authenticated' ) );
-				delete_transient( 'tlc__' . md5( 'hm_user' ) );
-				delete_transient( 'tlc__' . md5( 'hm_organisations' ) );
-
-				return;
-			}
-			if (array_key_exists( 'hm_client_id', $_REQUEST ) ) {
-				update_option('hm_client_id', $_REQUEST['hm_client_id']);
+			if ($_REQUEST['hm_purge_creds'] === 'on' ) {
+				return self::purge_settings();
 			}
 
-
-			if (array_key_exists( 'hm_client_secret', $_REQUEST ) ) {
-				update_option('hm_client_secret', $_REQUEST['hm_client_secret']);
+			if (array_key_exists( 'hm_personal_token', $_REQUEST ) ) {
+				update_option('hm_personal_token', $_REQUEST['hm_personal_token']);
 			}
-
 
 			if (array_key_exists( 'hm_the_organisation', $_REQUEST ) ) {
 				if( self::$gh_the_organisation !== $_REQUEST['hm_the_organisation']) {
 					delete_transient( 'tlc__' . md5( 'hm_repositories' ) );
-
 				}
 
 				update_option('hm_the_organisation', $_REQUEST['hm_the_organisation']);
-			}
-		}
-	}
-
-
-	/**
-	 * Responsible for grabbing the code returned from Github and POST exchanging it
-	 * to an access token.
-	 */
-	public function exchange_code_for_token() {
-		if (self::$user->ID === 1 && array_key_exists('code', $_GET) && array_key_exists('state', $_GET) ) {
-			$code = $_GET['code'];
-			$state = $_GET['state'];
-			if( !wp_verify_nonce( $state, '_hm_github_oauth' ) ) {
-				return;
-			}
-
-			$response = wp_remote_post(
-				'https://github.com/login/oauth/access_token',
-				array(
-					'method' => 'POST',
-					'timeout' => 45,
-					'redirection' => 5,
-					'httpversion' => '1.0',
-					'blocking' => true,
-					'headers' => array(),
-					'body' => array(
-						'client_id' => self::$client_id,
-						'client_secret' => self::$client_secret,
-						'code' => $_GET['code']
-					),
-					'cookies' => array()
-			    )
-			);
-
-			// if Github is down or there's another problem
-			if ( is_wp_error( $response ) ) {
-				return null;
-			}
-
-			$response_array = wp_parse_args( $response['body'] );
-
-			// If there's an access token in there
-			if ( array_key_exists( 'access_token', $response_array ) ) {
-
-				// Let's store the token
-				self::$token = $response_array['access_token'];
-
-				// Let's do some housekeeping first
-				delete_option( 'hm_last_error' );
-				update_option( 'hm_token', $response_array['access_token'] );
-
-				// Let's get the user connected to the token
-				$user_data = self::fetch_data( 'user' );
-
-				self::$gh_user = $user_data;
-
-				// Let's get the organisations the user belongs to
-				$organisations = self::fetch_data( 'organizations_url' );
-				self::$gh_organisations = $organisations;
-
-				update_option( 'hm_organisations', $organisations );
-				update_option( 'hm_user', $user_data );
-
-			// If there's an error in there
-			} elseif ( array_key_exists( 'error', $response_array ) ) {
-
-				$reponse_string = '<p><pre>' . $response_array['error'] . ':</pre> ';
-				$reponse_string .= $response_array['error_description'] . '. ';
-				$reposne_string .= '<a target="_blank" href="' . $response_array['error_uri'] . '">Click for more info</a>.';
-				delete_option( 'hm_token' );
-				delete_option( 'hm_user' );
-				delete_option( 'hm_organisations' );
-				update_option( 'hm_last_error', $response_string );
-				self::$token = undefined;
 			}
 		}
 	}
@@ -427,38 +339,18 @@ class HMGithubOAuth {
 				<tbody>
 					<tr>
 						<th>
-							<label for="hm_client_id">Client ID</label>
+							<label for="hm_personal_token">Personal Token</label>
 						</th>
 						<td>
-							<input id="hm_client_id" name="hm_client_id" type="text" class="regular-text" size="16" value="<?php echo self::$client_id; ?>" /><br>
-							<span class="description">You'll need to register a new <a href="https://github.com/settings/applications">developer application in Github</a>, and get the Client ID and Client secret to these two fields.</span>
+							<input id="hm_personal_token" name="hm_personal_token" type="text" class="regular-text" size="16" value="<?php echo self::$token; ?>" /><br>
+							<span class="description">You'll need to register a new <a href="https://github.com/settings/applications">personal token</a> with repo, public_repo and read:org and paste the token here.</span>
 						</td>
 					</tr>
-					<tr>
-						<th><label for="hm_client_secret">Client secret</label></th>
-						<td>
-							<input id="hm_client_secret" name="hm_client_secret" type="text" class="regular-text" size="16" value="<?php echo self::$client_secret; ?>" />
-						</td>
-					</tr>
+
 					<?php
 					if ( self::$token ) {
 						?>
-						<tr>
-							<th><label>Token</label></th>
-							<td>
-								<input type="text" value="<?php echo self::$token; ?>" disabled="disabled" class="regular-text" size="16"  /><br>
-								<?php
-								if ( self::$gh_user ) {
-									?>
-									<span class="description">Welcome, <?php echo self::$gh_user->name; ?>! You have successfully authenticated.</span></td>
-									<?php
-								} else {
-									?>
-									<span class="description">Please reload the page!</span></td>
-									<?php
-								}
-								?>
-						</tr>
+
 						<tr>
 							<th><label for="hm_the_organisation">Select an Organisation</label></th>
 							<td>
@@ -482,25 +374,6 @@ class HMGithubOAuth {
 						</tr>
 						<?php
 					}
-					if( self::$errors ) {
-						?>
-						<tr>
-							<th><label>Error</label></th>
-							<td><?php echo self::$errors; ?> You need to reauthorize.</td>
-						</tr>
-						<?php
-					}
-					if( self::$client_id !== '' && self::$client_secret !== '' && ( self::$token === '' || self::$errors ) ) {
-						?>
-						<tr>
-							<th><label>Authorize Github</label></th>
-							<td>
-								<a href="https://github.com/login/oauth/authorize?client_id=<?php echo self::$client_id; ?>&amp;state=<?php echo $nonce; ?>&amp;scope=repo">Get started with authentication</a>
-							</td>
-						</tr>
-						<?php
-					}
-
 					if ( self::$is_authenticated ) {
 						?>
 						<tr>
@@ -523,37 +396,6 @@ class HMGithubOAuth {
 							<input type="checkbox" name="hm_purge_creds" id="hm_purge_creds">
 						</td>
 					</tr>
-					<?php
-					// For debugging purposes only
-					if ( 1 == 2 ) {
-						if ( self::$gh_repositories ) {
-							?>
-							<tr>
-								<td><label>Repositories</label></td>
-								<td>
-									<p>
-										<?php
-
-										foreach (self::$gh_repositories as $repo) {
-											echo $repo->name . '<br />';
-										}
-										?>
-									</p>
-								</td>
-							</tr>
-							<?php
-						} else {
-							?>
-							<tr>
-								<th><label for="">Repositories</label></th>
-								<td>
-									<p>Fetching the data from Github, it might take a while.</p>
-								</td>
-							</tr>
-							<?php
-						}
-					}
-					?>
 				</tbody>
 			</table>
 			<?php
@@ -585,6 +427,7 @@ class HMGithubOAuth {
 		if(!$url) {
 			return false;
 		}
+
 
 		$fetch = add_query_arg( array( 'access_token' => self::$token ), $url );
 
@@ -632,7 +475,6 @@ class HMGithubOAuth {
 
 		/**
 		 * Second pyramid of DOOM
-		 * @var [type]
 		 */
 		if(empty(self::$gh_repositories) || !is_array(self::$gh_repositories)) {
 			return $temp;
@@ -667,7 +509,9 @@ class HMGithubOAuth {
 	 * @return boolean          whether it's in or out
 	 */
 	private function get_current_organisations( $element ) {
-
+		if(!is_array(self::$gh_the_organisation)) {
+			return false;
+		}
 		return in_array( $element->repos_url, self::$gh_the_organisation );
 	}
 
@@ -678,7 +522,7 @@ class HMGithubOAuth {
 	 */
 	public function get_orgs_for_widget() {
 		$filtered_orgs = false;
-		if(self::$gh_organisations) {
+		if(self::$gh_organisations && is_array(self::$gh_organisations)) {
 
 			$filtered_orgs = array_filter( self::$gh_organisations, array( $this, 'get_current_organisations' ) );
 		}
@@ -693,8 +537,10 @@ class HMGithubOAuth {
 	 * @return void        					echoes
 	 */
 	public function multi_checked( $is, $input ) {
-		if( in_array( $input, $is ) ) {
-			echo ' checked="checked"';
+		if ( is_array( $is ) ) {
+			if( in_array( $input, $is ) ) {
+				echo ' checked="checked"';
+			}
 		}
 	}
 
@@ -710,4 +556,5 @@ class HMGithubOAuth {
 		return self::$instance;
 	}
 }
+
 add_action( 'plugins_loaded', array( 'HMGithubOAuth', 'get_instance' ) );
