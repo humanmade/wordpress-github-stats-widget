@@ -1,35 +1,18 @@
 # HM GitHub Stats
 
 ## Configuration
-Add the following to your `wp-config.php`, but replace as needed with your
-actual username/password:
+You need to be user with ID 1 to configure the plugin.
 
-```php
-define( 'HMG_USERNAME', 'willmot' );
-define( 'HMG_PASSWORD', 'hunter2' );
-define( 'HMG_ORGANISATION', 'humanmade' );
-```
+Create a personal token on your Github profile. Go here: [https://github.com/settings/applications](https://github.com/settings/applications) and click Generate new token. Have `repo`, `public_repo` and `read:org` ticked, the rest are not necessary.
+
+Navigate to Users -> Your profile, and scroll down towards the bottom. Copy and paste the personal token into the field. After saving, you should see all the organisations your Github user belongs to. Select the ones you will potentially want to gather data from, and click save.
+
+WordPress will go and fetch all the usage statistics. This might take a while, and you might have partial data from some of the repositories before all of them arrive. It should be a 5-10 minute process depending on your server's connection speed, Github's availability, the number of organisations and the number of repositories in those organisations.
+
+If you wish to reset all the settings, tick Purge Settings, and update.
 
 ## Usage
-```php
-
-<div class="stat-commits" style="position:relative;">
-
-    <div id="graph-commits" style="position:absolute;top:0;right:0;"></div>
-
-    <div class="stat-wrap">
-    	<a href="https://github.com/humanmade"><div class="stat-num"><?php echo ( $commits = array_sum( hmg_get_formatted_commits_for_month_cached() ) ) ? $commits : '&hellip;'; ?></div></a>
-    </div>
-
-    <div class="stat-comment">
-        <span style="float:left">github commits this month</span>
-        30 days / <span class="active"><strong><?php echo ( $average = hmg_commits_by_day_average() ) ? $average : '&hellip;'; ?></strong> commits per day</span>
-
-    </div>
-
-</div>
-
-```
+Go to Appearance -> Widgets. There you will find one that's called Github Statistics. Drag it where you want it to appear, give it a name, optionally give it an absolute link (http:// or https:// in front), and save. If all data gathering is finished by this point, you should see the data in the sidebar.
 
 ## Contribution guidelines ##
 
