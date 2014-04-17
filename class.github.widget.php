@@ -74,7 +74,7 @@ class HMGithubWidget extends WP_Widget {
             if( ! empty( $link ) ) {
                 echo '<a href="' . esc_url( $link ) . '">';
             }
-            echo $args['before_title'] . sanitize_text_field( $title ) . $args['after_title'];
+            echo $args['before_title'] . esc_attr( $title ) . $args['after_title'];
             if( ! empty( $link ) ) {
                 echo '</a>';
             }
@@ -146,7 +146,7 @@ class HMGithubWidget extends WP_Widget {
         ?>
         <p>
             <label for="<?php echo $this->get_field_id( 'title' ); ?>"><?php _e( 'Title:' ); ?></label>
-            <input class="widefat" id="<?php echo $this->get_field_id( 'title' ); ?>" name="<?php echo $this->get_field_name( 'title' ); ?>" type="text" value="<?php echo sanitize_text_field( $title ); ?>">
+            <input class="widefat" id="<?php echo $this->get_field_id( 'title' ); ?>" name="<?php echo $this->get_field_name( 'title' ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>">
         </p>
 
         <p>
@@ -198,7 +198,7 @@ class HMGithubWidget extends WP_Widget {
      */
     public function update( $new_instance, $old_instance ) {
         $instance = array();
-        $instance['title'] = ( ! empty( $new_instance['title'] ) ) ? sanitize_text_field( $new_instance['title'] ) : '';
+        $instance['title'] = ( ! empty( $new_instance['title'] ) ) ? esc_attr( $new_instance['title'] ) : '';
         $instance['link'] = ( ! empty( $new_instance['link'] ) ) ? esc_url( $new_instance['link'] ) : '';
         $instance['orgs'] = ( ! empty( $new_instance['orgs'] ) ) ? $new_instance['orgs'] : false;
 
