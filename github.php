@@ -26,33 +26,38 @@ add_filter( 'user_contactmethods', 'hmg_github_user_field' );
 function hmg_get_commits_for_day( $day ) {
 
 	// No configuration set. :(
-	if ( ! defined( 'HMG_USERNAME' ) || ! defined( 'HMG_PASSWORD' ) || ! defined( 'HMG_ORGANISATION' ) )
+	if ( ! defined( 'HMG_USERNAME' ) || ! defined( 'HMG_PASSWORD' ) || ! defined( 'HMG_ORGANISATION' ) ) {
 		return;
+	}
 
 	set_time_limit(0);
 
 	// The day is not over!
-	if ( $day == strtotime( 'today') )
+	if ( $day == strtotime( 'today' ) ) {
 		return;
+	}
 
-	// Create the days array. j
-	$commits = array();
+	// Create the days array.
+	$commits      = array();
 
-	$username = HMG_USERNAME;
-	$password = HMG_PASSWORD;
+	$username     = HMG_USERNAME;
+	$password     = HMG_PASSWORD;
 	$organisation = HMG_ORGANISATION;
 
-	$github = new HMGitHub( $username, $password );
+	$github       = new HMGitHub( $username, $password );
+
 	$github->organisation = $organisation;
 	$github->authenticate();
 
 	// We need to make sure there aren't any duplicate repos.
 	$repos = array();
-	foreach ( (array) $github->get_repos() as $repo )
+	foreach ( (array) $github->get_repos() as $repo ) {
 		$repos[] = $repo->name;
+	}
 
-	if ( empty( $repos ) )
+	if ( empty( $repos ) ) {
 		return null;
+	}
 
 	foreach ( array_unique( $repos ) as $key => $repo ) {
 
@@ -68,8 +73,9 @@ function hmg_get_commits_for_day( $day ) {
 
 				$response = $github->get_repo_commits( $repo, $branch->name, $sha ); //more paginated commits (sha defines start point of returned results)
 
-				if ( ! $response )
+				if ( ! $response ) {
 					break;
+				}
 
 				foreach ( $response as $commit ) {
 
@@ -122,7 +128,7 @@ function hmg_update_commits_by_day() {
 
 	//Period of time to check over. Make sure last 30 days is complete. Just in case one is incomplete.
 	$day_to_check = strtotime( '30 days ago' );
-	$commits = get_option( 'hmg_commits_by_day', array() );
+	$commits      = get_option( 'hmg_commits_by_day', array() );
 
 	// Loop through the days, and check whether that days data exists. If not - get it.
 	// Note only 1 day of data is collected each time this function is called.
@@ -133,8 +139,9 @@ function hmg_update_commits_by_day() {
 
 			$response = hmg_get_commits_for_day( $i );
 
-			if ( ! is_null( $response ) )
+			if ( ! is_null( $response ) ) {
 				$commits[$i] = $response;
+			}
 
 			ksort( $commits );
 			update_option( 'hmg_commits_by_day', $commits );
@@ -165,8 +172,9 @@ function hmg_get_formatted_commits_for_month() {
 	foreach( $commits as $day => $day_commits )
 		$r[ $day ] = count( $day_commits );
 
-	if ( count( $r ) < 30 )
-		$r = array_pad( $r, 30, 0);
+	if ( count( $r ) < 30 ) {
+		$r = array_pad( $r, 30, 0 );
+	}
 
 	return $r;
 
@@ -220,6 +228,7 @@ add_action( 'wp_footer', 'hmg_commits_by_day_script' );
 function hmg_commits_by_day_average() {
 
 	$commits = hmg_get_formatted_commits_for_month_cached();
+
 	return round( array_sum( $commits ) / count( $commits ), 1 );
 
 }
@@ -233,11 +242,13 @@ function hmg_commits_by_day_average() {
  */
 function hmg_get_user_info() {
 
-	if ( ! defined( 'HMG_ORGANISATION' ) )
+	if ( ! defined( 'HMG_ORGANISATION' ) ) {
 		return null;
+	}
 
 	$username = HMG_ORGANISATION;
-	$github = new HMGitHub( $username );
+	$github   = new HMGitHub( $username );
+
 	return $github->get_user_info();
 
 }
@@ -251,8 +262,9 @@ function hmg_get_user_info() {
  */
 function hmg_get_cached_user_info() {
 
-	if ( ! defined( 'HMG_ORGANISATION' ) )
+	if ( ! defined( 'HMG_ORGANISATION' ) ) {
 		return null;
+	}
 
 	$username = HMG_ORGANISATION;
 	$info = (array) tlc_transient( 'hmg_get_user_info_' . $username )
